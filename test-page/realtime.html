@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dev Companion realtime test page</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 24px;
+        max-width: 960px;
+      }
+      button {
+        margin: 3px;
+        padding: 6px 10px;
+      }
+      fieldset {
+        margin-bottom: 12px;
+      }
+      #log {
+        font-family: monospace;
+        font-size: 12px;
+        white-space: pre-wrap;
+        background: #f3f3f3;
+        padding: 8px;
+        min-height: 80px;
+        max-height: 320px;
+        overflow: auto;
+      }
+      #toasts {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .toast {
+        background: #1d2129;
+        color: #fff;
+        padding: 8px 12px;
+        border-radius: 6px;
+      }
+    </style>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/vendor/signalr.js"></script>
+  </head>
+  <body>
+    <h1>Realtime test page</h1>
+    <p>
+      Each button drives a real connection against the local server. The page's own log below is the reference
+      for "the application still behaves normally".
+    </p>
+
+    <fieldset>
+      <legend>Order flow (HTTP → realtime notification → toast)</legend>
+      <button id="create-order">Create order</button>
+      <button id="create-order-dup">Create order (server sends duplicate event)</button>
+      <button id="create-order-malformed">Create order (event missing orderId)</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>WebSocket</legend>
+      <button id="ws-connect">Connect</button>
+      <button id="ws-send-json">Send JSON</button>
+      <button id="ws-send-secret">Send secret</button>
+      <button id="ws-binary-out">Send binary</button>
+      <button id="ws-binary-in">Receive binary</button>
+      <button id="ws-large">Receive large (200 KB)</button>
+      <button id="ws-malformed">Receive malformed JSON</button>
+      <button id="ws-flood">Receive 300 frames</button>
+      <button id="ws-close-1011">Server close 1011</button>
+      <button id="ws-drop">Abrupt drop (1006)</button>
+      <button id="ws-flaky">Flaky + auto-reconnect ×3</button>
+      <button id="ws-reject">Rejected handshake</button>
+      <button id="ws-client-close">Client close 4000</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>Socket.IO</legend>
+      <button id="sio-connect">Connect (polling → upgrade)</button>
+      <button id="sio-connect-ws">Connect (WebSocket only)</button>
+      <button id="sio-order">emit place-order with ack</button>
+      <button id="sio-fail">emit fail-order (ack error)</button>
+      <button id="sio-admin-bad">/admin with bad auth</button>
+      <button id="sio-admin-ok">/admin with good auth</button>
+      <button id="sio-disconnect">Disconnect</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>SignalR (mock hub, JSON Hub Protocol)</legend>
+      <button id="sr-ws">Start (WebSockets)</button>
+      <button id="sr-sse">Start (Server-Sent Events)</button>
+      <button id="sr-lp">Start (Long Polling)</button>
+      <button id="sr-order">invoke PlaceOrder</button>
+      <button id="sr-fail">invoke Fail</button>
+      <button id="sr-stop">Stop</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>Server-Sent Events</legend>
+      <button id="sse-open">Open stream</button>
+      <button id="sse-drop">Open stream that drops (auto-reconnect)</button>
+      <button id="sse-fail">Open failing stream (HTTP 500)</button>
+      <button id="sse-close">Close stream</button>
+    </fieldset>
+
+    <div id="log"></div>
+    <div id="toasts"></div>
+
+    <script>
+      // ---- app scaffolding -------------------------------------------------------------
+      window.appLog = [];
+      const logEl = document.getElementById('log');
+      function log(kind, detail = '') {
+        window.appLog.push({ kind, detail });
+        logEl.textContent = `${new Date().toLocaleTimeString()} ${kind} ${detail}\n` + logEl.textContent;
+      }
+      const on = (id, fn) =>
+        document.getElementById(id).addEventListener('click', () => {
+          try {
+            const r = fn();
+            if (r && r.catch) r.catch((e) => log('error', `${e.name}: ${e.message}`));
+          } catch (e) {
+            log('error', `${e.name}: ${e.message}`);
+          }
+        });
+      const devCompanion = () => window.__devCompanion; // opt-in adapter API, absent unless enabled
+
+      function showToast(text) {
+        const el = document.createElement('div');
+        el.className = 'toast';
+        el.setAttribute('role', 'status');
+        el.textContent = text;
+        document.getElementById('toasts').appendChild(el);
+        setTimeout(() => el.remove(), 4000);
+      }
+
+      // The application's notification handler. It intentionally does not deduplicate.
+      function handleOrderCreated(payload, via) {
+        devCompanion()?.signal('handler-ran', {
+          handler: 'handleOrderCreated',
+          via,
+          orderId: payload?.orderId ?? '',
+        });
+        if (!payload || !payload.orderId) {
+          console.warn('Ignoring order notification without orderId', payload);
+          log('notification-ignored', via);
+          return;
+        }
+        showToast(`Order ${payload.orderId} created`);
+        devCompanion()?.signal('toast-shown', { orderId: payload.orderId, via });
+        log('toast', `${payload.orderId} via ${via}`);
+      }
+
+      const createOrder = async (query = '') => {
+        const res = await fetch(`/api/rt/orders${query}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ productId: 'kbd-1', quantity: 1 }),
+        });
+        const body = await res.json();
+        log('order-http', `${res.status} ${body.orderId} ${res.headers.get('x-request-id')}`);
+      };
+      on('create-order', () => createOrder());
+      on('create-order-dup', () => createOrder('?dup=1'));
+      on('create-order-malformed', () => createOrder('?malformed=1'));
+
+      // ---- WebSocket ---------------------------------------------------------------------
+      let ws;
+      const wsUrl = (path = '/ws', q = '') => `${location.origin.replace('http', 'ws')}${path}${q}`;
+      function openWs(q = '') {
+        return new Promise((resolve) => {
+          const socket = new WebSocket(wsUrl('/ws', q));
+          socket.binaryType = 'arraybuffer';
+          socket.onopen = () => {
+            log('ws-open');
+            resolve(socket);
+          };
+          socket.onmessage = (e) => {
+            if (typeof e.data !== 'string') return log('ws-binary', `${e.data.byteLength} bytes`);
+            let msg;
+            try {
+              msg = JSON.parse(e.data);
+            } catch {
+              log('ws-parse-error', e.data.slice(0, 40));
+              return;
+            }
+            if (msg.type === 'tick') window.tickCount = (window.tickCount ?? 0) + 1;
+            else if (msg.type === 'order.created') handleOrderCreated(msg, 'websocket');
+            else log('ws-message', `${msg.type} ${e.data.length}`);
+          };
+          socket.onerror = () => log('ws-error');
+          socket.onclose = (e) => {
+            log('ws-close', `${e.code} ${e.reason} clean=${e.wasClean}`);
+            resolve(socket);
+          };
+        });
+      }
+      on('ws-connect', async () => (ws = await openWs()));
+      on('ws-send-json', () => ws.send(JSON.stringify({ cmd: 'echo', type: 'subscribe', topic: 'orders' })));
+      on('ws-send-secret', () =>
+        ws.send(JSON.stringify({ cmd: 'echo', type: 'auth', password: 'ws-hunter2' })),
+      );
+      on('ws-binary-out', () => ws.send(new Uint8Array([9, 8, 7, 6, 5])));
+      on('ws-binary-in', () => ws.send(JSON.stringify({ cmd: 'binary' })));
+      on('ws-large', () => ws.send(JSON.stringify({ cmd: 'large' })));
+      on('ws-malformed', () => ws.send(JSON.stringify({ cmd: 'malformed' })));
+      on('ws-flood', () => ws.send(JSON.stringify({ cmd: 'flood', n: 300 })));
+      on('ws-close-1011', () => ws.send(JSON.stringify({ cmd: 'close-1011' })));
+      on('ws-drop', () => ws.send(JSON.stringify({ cmd: 'drop' })));
+      on('ws-client-close', () => ws.close(4000, 'user logged out'));
+      on('ws-reject', () => {
+        const s = new WebSocket(wsUrl('/ws/reject'));
+        s.onerror = () => log('ws-reject-error');
+        s.onclose = (e) => log('ws-reject-close', String(e.code));
+      });
+      on('ws-flaky', async () => {
+        // App-level reconnect loop with backoff (what many apps do).
+        for (let attempt = 0; attempt < 3; attempt++) {
+          await openWs('?scenario=flaky');
+          log('ws-reconnect', `attempt ${attempt + 1}`);
+          await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
+        }
+      });
+
+      // ---- Socket.IO -----------------------------------------------------------------------
+      let sio;
+      function wireSio(socket, label) {
+        socket.on('connect', () => log('sio-connect', `${label} ${socket.io.engine.transport.name}`));
+        socket.io.engine?.on?.('upgrade', (t) => log('sio-upgrade', t.name));
+        socket.on('connect_error', (err) => log('sio-connect-error', `${label} ${err.message}`));
+        socket.on('disconnect', (reason) => log('sio-disconnect', reason));
+        socket.on('welcome', () => log('sio-welcome'));
+        socket.on('order.created', (p) => handleOrderCreated(p, 'socket.io'));
+        devCompanion()?.attachSocketIO(socket);
+        return socket;
+      }
+      on('sio-connect', () => (sio = wireSio(io({ transports: ['polling', 'websocket'] }), 'default')));
+      on('sio-connect-ws', () => (sio = wireSio(io({ transports: ['websocket'] }), 'ws-only')));
+      on('sio-order', () =>
+        sio.emit('place-order', { item: 'keyboard' }, (ack) => log('sio-ack', JSON.stringify(ack))),
+      );
+      on('sio-fail', () =>
+        sio.emit('fail-order', { item: 'x' }, (ack) => log('sio-ack', JSON.stringify(ack))),
+      );
+      on('sio-admin-bad', () =>
+        wireSio(io('/admin', { auth: { token: 'wrong' }, reconnection: false }), 'admin-bad'),
+      );
+      on('sio-admin-ok', () => {
+        const a = wireSio(io('/admin', { auth: { token: 'admin-ok' } }), 'admin-ok');
+        a.on('admin.hello', () => log('sio-admin-hello'));
+      });
+      on('sio-disconnect', () => sio?.disconnect());
+
+      // ---- SignalR -----------------------------------------------------------------------------
+      let hub;
+      async function startHub(transport) {
+        hub = new signalR.HubConnectionBuilder()
+          .withUrl('/hubs/orders', { transport })
+          .configureLogging(signalR.LogLevel.Warning)
+          .build();
+        hub.on('OrderCreated', (p) => handleOrderCreated(p, 'signalr'));
+        hub.onclose((e) => log('sr-close', e ? e.message : 'clean'));
+        devCompanion()?.attachSignalR(hub);
+        await hub.start();
+        log('sr-start', String(transport));
+      }
+      on('sr-ws', () => startHub(signalR.HttpTransportType.WebSockets));
+      on('sr-sse', () => startHub(signalR.HttpTransportType.ServerSentEvents));
+      on('sr-lp', () => startHub(signalR.HttpTransportType.LongPolling));
+      on('sr-order', async () =>
+        log('sr-result', JSON.stringify(await hub.invoke('PlaceOrder', { sku: 'kbd-1' }))),
+      );
+      on('sr-fail', async () => {
+        try {
+          await hub.invoke('Fail', {});
+        } catch (e) {
+          log('sr-invoke-error', e.message);
+        }
+      });
+      on('sr-stop', () => hub?.stop());
+
+      // ---- SSE ---------------------------------------------------------------------------------
+      let es;
+      function openSse(url) {
+        es = new EventSource(url);
+        es.onopen = () => log('sse-open');
+        es.onerror = () => log('sse-error', `readyState=${es.readyState}`);
+        es.onmessage = (e) => log('sse-message', e.data);
+        es.addEventListener('order.created', (e) => handleOrderCreated(JSON.parse(e.data), 'sse'));
+        es.addEventListener('hello', (e) => log('sse-hello', e.data));
+      }
+      on('sse-open', () => openSse('/sse/orders'));
+      on('sse-drop', () => openSse('/sse/orders?drop=1'));
+      on('sse-fail', () => openSse('/sse/fail'));
+      on('sse-close', () => es?.close());
+    </script>
+  </body>
+</html>

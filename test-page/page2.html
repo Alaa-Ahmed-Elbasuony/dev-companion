@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dev Companion test page 2</title>
+    <script>
+      fetch('/api/products').then((r) => r.json());
+    </script>
+  </head>
+  <body>
+    <h1>Page 2</h1>
+    <p>This page issues <code>GET /api/products</code> while loading. <a href="/">Back</a></p>
+  </body>
+</html>

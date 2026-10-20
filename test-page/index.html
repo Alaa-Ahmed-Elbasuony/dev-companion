@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dev Companion test page</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 24px;
+        max-width: 900px;
+      }
+      button {
+        margin: 3px;
+        padding: 6px 10px;
+      }
+      fieldset {
+        margin-bottom: 12px;
+      }
+      #log {
+        font-family: monospace;
+        font-size: 12px;
+        white-space: pre-wrap;
+        background: #f3f3f3;
+        padding: 8px;
+        min-height: 80px;
+      }
+    </style>
+    <script>
+      // Issued during page initialization: verifies early instrumentation after a reload.
+      fetch('/api/init')
+        .then((r) => r.json())
+        .then(() => log('init loaded'));
+    </script>
+  </head>
+  <body>
+    <h1>Dev Companion test page</h1>
+    <p>Each button triggers a request against the local mock API. Results appear in the log below.</p>
+
+    <fieldset>
+      <legend>fetch</legend>
+      <button id="order-ok">Create order (201)</button>
+      <button id="order-stock">Create order (422 OUT_OF_STOCK)</button>
+      <button id="order-double">Double submit (2× POST)</button>
+      <button id="products">GET products</button>
+      <button id="products-v2">GET products v2 (contract change)</button>
+      <button id="slow">Slow request (2.5 s)</button>
+      <button id="error">Server error (500)</button>
+      <button id="abort">Aborted request</button>
+      <button id="timeout">Timeout (AbortSignal.timeout)</button>
+      <button id="drop">Network failure</button>
+      <button id="redirect">Redirect</button>
+      <button id="large">Large body (1.5 MB)</button>
+      <button id="binary">Binary body</button>
+      <button id="login">Login (secrets)</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>XMLHttpRequest / beacon</legend>
+      <button id="xhr-order">XHR create order (422)</button>
+      <button id="xhr-json">XHR responseType=json</button>
+      <button id="beacon">sendBeacon</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>Errors, navigation, forms</legend>
+      <button id="console-error">console.error</button>
+      <button id="throw">Uncaught error</button>
+      <button id="reject">Unhandled rejection</button>
+      <button id="failing-flow">Failed request + crash</button>
+      <button id="route">history.pushState</button>
+      <a href="/page2" id="nav">Navigate to page 2</a>
+      <form
+        id="login-form"
+        onsubmit="
+          event.preventDefault();
+          log('form submitted (not sent)');
+        "
+      >
+        <input name="email" value="ada@example.com" />
+        <input name="password" type="password" value="hunter2-form" />
+        <button type="submit" id="submit-form">Submit form</button>
+      </form>
+    </fieldset>
+
+    <div id="log"></div>
+
+    <script>
+      const logEl = document.getElementById('log');
+      function log(msg) {
+        logEl.textContent = `${new Date().toLocaleTimeString()} ${msg}\n` + logEl.textContent;
+      }
+      const on = (id, fn) =>
+        document
+          .getElementById(id)
+          .addEventListener('click', () => fn().catch((e) => log(`error: ${e.name}: ${e.message}`)));
+      const postOrder = (quantity) =>
+        fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ productId: '123', quantity }),
+        });
+
+      on('order-ok', async () => log(`order ${(await postOrder(1)).status}`));
+      on('order-stock', async () => {
+        const res = await postOrder(5);
+        log(`order ${res.status} ${JSON.stringify(await res.json())}`);
+      });
+      on('order-double', async () => {
+        await Promise.all([postOrder(1), postOrder(1)]);
+        log('double submitted');
+      });
+      on('products', async () => log(`products ${(await fetch('/api/products')).status}`));
+      on('products-v2', async () => log(`products v2 ${(await fetch('/api/products?variant=v2')).status}`));
+      on('slow', async () => log(`slow ${(await fetch('/api/slow')).status}`));
+      on('error', async () => log(`error ${(await fetch('/api/error')).status}`));
+      on('abort', async () => {
+        const c = new AbortController();
+        setTimeout(() => c.abort(), 100);
+        await fetch('/api/hang', { signal: c.signal });
+      });
+      on('timeout', async () => {
+        await fetch('/api/hang?t', { signal: AbortSignal.timeout(150) });
+      });
+      on('drop', async () => fetch('/api/drop'));
+      on('redirect', async () => log(`redirect -> ${(await fetch('/api/redirect')).url}`));
+      on('large', async () =>
+        log(`large ${(await (await fetch('/api/large')).text()).length} chars read by page`),
+      );
+      on('binary', async () =>
+        log(`binary ${(await (await fetch('/api/binary')).arrayBuffer()).byteLength} bytes`),
+      );
+      on('login', async () => {
+        const res = await fetch('/api/login?api_key=key-secret-456', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer header-secret-789' },
+          body: JSON.stringify({ email: 'ada@example.com', password: 'hunter2-body' }),
+        });
+        log(`login ${res.status}`);
+      });
+      const xhr = (method, url, body, type = '') =>
+        new Promise((resolve) => {
+          const x = new XMLHttpRequest();
+          x.open(method, url);
+          x.responseType = type;
+          if (body) x.setRequestHeader('Content-Type', 'application/json');
+          x.onloadend = () => resolve(x);
+          x.send(body);
+        });
+      on('xhr-order', async () =>
+        log(
+          `xhr order ${(await xhr('POST', '/api/orders', JSON.stringify({ productId: '123', quantity: 9 }))).status}`,
+        ),
+      );
+      on('xhr-json', async () =>
+        log(
+          `xhr json ${JSON.stringify((await xhr('GET', '/api/products', null, 'json')).response).slice(0, 40)}`,
+        ),
+      );
+      on('beacon', async () =>
+        log(`beacon queued: ${navigator.sendBeacon('/api/analytics', JSON.stringify({ event: 'test' }))}`),
+      );
+      on('console-error', async () => console.error('Checkout failed', { code: 'OUT_OF_STOCK' }));
+      on('throw', async () =>
+        setTimeout(() => {
+          throw new Error('Uncaught test error');
+        }),
+      );
+      on('reject', async () => {
+        Promise.reject(new Error('Unhandled test rejection'));
+      });
+      on('failing-flow', async () => {
+        const res = await fetch('/api/error');
+        const data = await res.json();
+        setTimeout(() => data.items.map((i) => i)); // crashes: items is undefined
+      });
+      on('route', async () => {
+        history.pushState({}, '', `/orders/${Date.now()}`);
+        log(`route ${location.pathname}`);
+      });
+    </script>
+  </body>
+</html>
