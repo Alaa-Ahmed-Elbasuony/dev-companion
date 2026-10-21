@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { compareToShape, inferShape, validateJsonSchema } from '../../analysis/contracts';
 import type { ContractIssue, Shape } from '../../analysis/contracts';
-import { curlForEntry } from '../../analysis/curl';
+import { curlForEntry, fetchForEntry } from '../../analysis/curl';
 import { validateEntryAgainstOpenApi } from '../../analysis/openapi';
 import { redactEntry } from '../../analysis/redaction';
 import type { EventRef } from '../../analysis/trace-correlate';
@@ -15,9 +15,18 @@ import {
   tryParseJson,
 } from '../../shared/util';
 import { BodyView } from '../components/CodeView';
-import { CopyButton, KeyValueTable, MethodTag, Notice, StatusPill, Tabs } from '../components/common';
+import {
+  CodeBlock,
+  CopyButton,
+  KeyValueTable,
+  MethodTag,
+  Notice,
+  StatusPill,
+  Tabs,
+} from '../components/common';
 import { Badge, RelationBadge } from '../components/ui';
 import type { Analysis } from '../lib/analysis';
+import { headersForCopy, queryForCopy, rowsForCopy } from '../lib/copy-format';
 import { getStore, notifyDataChanged } from '../lib/extension';
 import { useDataVersion, useSettings } from '../lib/hooks';
 import type { SessionData } from '../lib/session-data';
@@ -82,6 +91,7 @@ export function RequestDetails({
   const key = endpointKey(entry.method, entry.url);
   const contract = data.contracts.find((c) => c.endpointKey === key && c.kind !== 'openapi');
   const curl = curlForEntry(entry, bodies);
+  const fetchCall = fetchForEntry(entry, bodies);
   const responseJson = useMemo(
     () =>
       bodies?.response?.text && !bodies.response.truncated
@@ -184,12 +194,13 @@ export function RequestDetails({
   };
 
   const overview = [
-    { name: 'URL', value: <span className="break">{entry.url}</span> },
+    { name: 'URL', value: <span className="break">{entry.url}</span>, copy: entry.url },
     ...(entry.finalUrl
       ? [
           {
             name: entry.redirected ? 'Redirected to' : 'Final URL',
             value: <span className="break">{entry.finalUrl}</span>,
+            copy: entry.finalUrl,
           },
         ]
       : []),
@@ -214,10 +225,17 @@ export function RequestDetails({
     { name: 'Request size', value: formatBytes(entry.requestBodySize) },
     { name: 'Response size', value: formatBytes(entry.responseBodySize) },
     { name: 'Response type', value: entry.responseContentType ?? '—' },
-    { name: 'Page', value: <span className="break">{entry.pageUrl}</span> },
+    { name: 'Page', value: <span className="break">{entry.pageUrl}</span>, copy: entry.pageUrl },
     { name: 'Origin / tab', value: `${entry.origin} · tab ${entry.tabId}` },
-    { name: 'Request id', value: <code>{entry.id}</code> },
+    { name: 'Request id', value: <code>{entry.id}</code>, copy: entry.id },
   ];
+
+  const overviewText = () =>
+    rowsForCopy(
+      overview.map((r) => ({ name: r.name, value: r.copy ?? (typeof r.value === 'string' ? r.value : '') })),
+    );
+
+  const queryParams = url ? [...url.searchParams] : [];
 
   const timing = [
     { name: 'Started', value: new Date(entry.startedAt).toLocaleTimeString() },
@@ -278,6 +296,11 @@ export function RequestDetails({
           label="Copy cURL"
           text={() => (curl.ok ? curl.command : null)}
           disabledReason={curl.ok ? undefined : curl.reason}
+        />
+        <CopyButton
+          label="Copy as fetch"
+          text={() => (fetchCall.ok ? fetchCall.command : null)}
+          disabledReason={fetchCall.ok ? undefined : fetchCall.reason}
         />
         <CopyButton label="Copy JSON" text={sanitizedJson} />
         <button type="button" className="btn btn-small" onClick={() => onReplay(entry)}>
@@ -367,7 +390,10 @@ export function RequestDetails({
                 ))}
               </div>
             )}
-            <KeyValueTable rows={overview} empty="" />
+            <div className="section-actions">
+              <CopyButton label="Copy overview" text={overviewText} />
+            </div>
+            <KeyValueTable rows={overview} empty="" copyable />
             {contract && (
               <div className="contract-box">
                 <h3>
@@ -428,19 +454,33 @@ export function RequestDetails({
         )}
         {activeTab === 'headers' && (
           <>
-            <h3>Request headers</h3>
+            <h3 className="section-head">
+              Request headers
+              {entry.requestHeaders.length > 0 && (
+                <CopyButton label="Copy" text={() => headersForCopy(entry.requestHeaders)} raw />
+              )}
+            </h3>
             <KeyValueTable
+              copyable
               rows={entry.requestHeaders.map((h) => ({
                 name: h.name,
                 value: <span className="break">{h.value}</span>,
+                copy: h.value,
               }))}
               empty="No request headers were set by the page (browser-added headers such as cookies are not visible to page scripts)."
             />
-            <h3>Response headers</h3>
+            <h3 className="section-head">
+              Response headers
+              {entry.responseHeaders.length > 0 && (
+                <CopyButton label="Copy" text={() => headersForCopy(entry.responseHeaders)} raw />
+              )}
+            </h3>
             <KeyValueTable
+              copyable
               rows={entry.responseHeaders.map((h) => ({
                 name: h.name,
                 value: <span className="break">{h.value}</span>,
+                copy: h.value,
               }))}
               empty="No response headers (no response, or headers hidden by CORS)."
             />
@@ -453,23 +493,32 @@ export function RequestDetails({
           </>
         )}
         {activeTab === 'query' && (
-          <KeyValueTable
-            rows={
-              url
-                ? [...url.searchParams].map(([name, value]) => ({
-                    name,
-                    value: <span className="break">{value}</span>,
-                  }))
-                : []
-            }
-            empty="No query parameters."
-          />
+          <>
+            {queryParams.length > 0 && (
+              <div className="section-actions">
+                <CopyButton label="Copy as JSON" text={() => queryForCopy(queryParams)} />
+                <CopyButton label="Copy query string" text={() => url?.search.slice(1) ?? ''} raw />
+              </div>
+            )}
+            <KeyValueTable
+              copyable
+              rows={queryParams.map(([name, value]) => ({
+                name,
+                value: <span className="break">{value}</span>,
+                copy: value,
+              }))}
+              empty="No query parameters."
+            />
+          </>
         )}
         {activeTab === 'payload' && <BodyView body={bodies?.request} label="Request" />}
         {activeTab === 'response' && <BodyView body={bodies?.response} label="Response" />}
         {activeTab === 'timing' && (
           <>
-            <KeyValueTable rows={timing} empty="" />
+            <div className="section-actions">
+              <CopyButton label="Copy timing" text={() => rowsForCopy(timing)} raw />
+            </div>
+            <KeyValueTable rows={timing} empty="" copyable />
             <p className="muted small">
               Measured in the page with Date.now(); includes queueing and body reading. Network phases (DNS,
               TLS) are not visible to page scripts.
@@ -482,7 +531,7 @@ export function RequestDetails({
               Call stack at the moment the request was issued (bundled locations; source maps are not
               applied).
             </p>
-            <pre className="code">{entry.initiatorStack}</pre>
+            <CodeBlock text={entry.initiatorStack ?? ''} label="Copy stack trace" raw />
           </>
         )}
         {activeTab === 'related' &&

@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { EvidenceLevel } from '../../analysis/error-detector';
 import type { LinkStrength } from '../../analysis/trace-correlate';
-import { Modal } from './common';
+import { valueForCopy } from '../lib/copy-format';
+import { CodeBlock, CopyButton, CopyIcon, Modal } from './common';
 
 export type Tone = 'error' | 'warning' | 'ok' | 'info' | 'muted';
 const TONE_ICON: Record<Tone, string> = { error: '✕', warning: '!', ok: '✓', info: '•', muted: '·' };
@@ -326,6 +327,7 @@ function JsonNode({
             … {value.length - 2000} more characters
           </button>
         )}
+        <CopyIcon label={`Copy ${name ?? 'value'}`} text={() => valueForCopy(value)} />
       </div>
     );
   }
@@ -345,17 +347,20 @@ function JsonNode({
   const visible = showAll ? entries : entries.slice(0, MAX_CHILDREN);
   return (
     <div className="jt-node">
-      <button type="button" className="jt-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <span aria-hidden="true">{open ? '▾' : '▸'}</span> {label}
-        {label && ': '}
-        {brackets[0]}
-        {!open && (
-          <span className="muted">
-            {' '}
-            {entries.length} {Array.isArray(value) ? 'items' : 'keys'} {brackets[1]}
-          </span>
-        )}
-      </button>
+      <div className="jt-toggle-row">
+        <button type="button" className="jt-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          <span aria-hidden="true">{open ? '▾' : '▸'}</span> {label}
+          {label && ': '}
+          {brackets[0]}
+          {!open && (
+            <span className="muted">
+              {' '}
+              {entries.length} {Array.isArray(value) ? 'items' : 'keys'} {brackets[1]}
+            </span>
+          )}
+        </button>
+        <CopyIcon label={`Copy ${name ?? 'value'}`} text={() => valueForCopy(value)} />
+      </div>
       {open && (
         <div className="jt-children">
           {visible.map(([k, v]) => (
@@ -423,13 +428,18 @@ export function JsonTree({ text, value }: { text?: string; value?: unknown }) {
     return (
       <div>
         <p className="muted small">Not valid JSON ({state.error}); showing raw text instead.</p>
-        {text !== undefined && <pre className="code">{text}</pre>}
+        {text !== undefined && <CodeBlock text={text} />}
       </div>
     );
   }
   return (
-    <div className="json-tree mono">
-      <JsonNode value={state.value} depth={0} defaultOpen />
+    <div className="json-tree-wrap">
+      <div className="code-toolbar">
+        <CopyButton label="Copy JSON" text={() => valueForCopy(state.value)} />
+      </div>
+      <div className="json-tree mono">
+        <JsonNode value={state.value} depth={0} defaultOpen />
+      </div>
     </div>
   );
 }

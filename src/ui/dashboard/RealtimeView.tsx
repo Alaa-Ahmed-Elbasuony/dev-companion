@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { messageTitle, protocolCategory } from '../../analysis/unified-timeline';
 import type { RealtimeConnection, RealtimeMessage } from '../../shared/types';
 import { formatBytes, formatDuration, safeUrl } from '../../shared/util';
-import { CopyButton, KeyValueTable, Notice, VirtualList } from '../components/common';
+import { CodeBlock, CopyButton, KeyValueTable, Notice, VirtualList } from '../components/common';
 import { ActiveFilters, Badge, EmptyState, JsonTree } from '../components/ui';
 import type { Chip, Tone } from '../components/ui';
 import { getStore } from '../lib/extension';
@@ -483,8 +483,9 @@ export function RealtimeView(props: ViewProps) {
                         ]
                       : []),
                     ...(msg.note ? [{ name: 'Note', value: msg.note }] : []),
-                    { name: 'Message id', value: <code>{msg.id}</code> },
+                    { name: 'Message id', value: <code>{msg.id}</code>, copy: msg.id },
                   ]}
+                  copyable
                   empty=""
                 />
                 {msg.parseError && <Notice kind="error">Malformed: {msg.parseError}</Notice>}
@@ -529,7 +530,7 @@ export function RealtimeView(props: ViewProps) {
                 {msg.text !== undefined && (
                   <>
                     <h3>Raw</h3>
-                    <pre className="code">{msg.text}</pre>
+                    <CodeBlock text={msg.text} label="Copy raw payload" raw />
                   </>
                 )}
                 {msg.opcode === 'binary' && (

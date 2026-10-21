@@ -6,7 +6,7 @@ import { TIMELINE_CATEGORIES, buildUnifiedTimeline, filterUnified } from '../../
 import type { TimelineCategory, UnifiedItem } from '../../analysis/unified-timeline';
 import type { RealtimeMessage } from '../../shared/types';
 import { formatDuration } from '../../shared/util';
-import { Notice, VirtualList } from '../components/common';
+import { CopyButton, Notice, VirtualList } from '../components/common';
 import { ActiveFilters, Badge, EmptyState, RelationBadge } from '../components/ui';
 import type { Chip } from '../components/ui';
 import { sendToWorker } from '../lib/extension';
@@ -301,6 +301,22 @@ export function TimelineView(props: ViewProps & { messages: RealtimeMessage[] | 
                   Investigate
                 </button>
               )}
+              <CopyButton
+                label="Copy event"
+                text={() =>
+                  [
+                    `${current.category}: ${current.title}`,
+                    `time: ${new Date(current.time).toISOString()}`,
+                    current.detail,
+                    ...Object.entries(current.ids)
+                      .filter(([, v]) => v)
+                      .map(([k, v]) => `${k}: ${v}`),
+                  ]
+                    .filter(Boolean)
+                    .join('\n')
+                }
+                raw
+              />
             </div>
             <div className="details-body">
               <p className="small">

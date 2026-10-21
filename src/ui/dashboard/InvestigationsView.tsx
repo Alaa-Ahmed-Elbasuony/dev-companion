@@ -361,7 +361,12 @@ function Workspace(props: ViewProps & { anchor: InvestigationAnchor }) {
           <button type="button" className="btn btn-small" onClick={() => void downloadReport('json')}>
             Report as JSON
           </button>
-          <CopyButton label="Copy Playwright draft" text={playwright} />
+          <CopyButton
+            label="Copy bug report"
+            text={async () => buildBugReportMarkdown(await reportInput())}
+            raw
+          />
+          <CopyButton label="Copy Playwright draft" text={playwright} raw />
         </div>
       </div>
       {message && <Notice kind={message.kind}>{message.text}</Notice>}

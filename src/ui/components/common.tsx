@@ -2,34 +2,93 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { statusClass } from '../../analysis/filter';
 import type { NetworkEntry } from '../../shared/types';
+import { prettyForCopy } from '../lib/copy-format';
 import { copyText } from '../lib/extension';
 
+type CopyState = 'idle' | 'copied' | 'failed';
+
+/** Shared click handler: resolves the text, formats it unless `raw`, and flashes the result. */
+type CopySource = () => string | null | Promise<string | null>;
+
+function useCopy(text: CopySource, raw: boolean) {
+  const [state, setState] = useState<CopyState>('idle');
+  const copy = async () => {
+    let ok: boolean;
+    try {
+      const value = await text();
+      if (value === null) return;
+      ok = await copyText(raw ? value : prettyForCopy(value));
+    } catch {
+      ok = false;
+    }
+    setState(ok ? 'copied' : 'failed');
+    setTimeout(() => setState('idle'), 1200);
+  };
+  return [state, copy] as const;
+}
+
+/** Labelled copy button. JSON text is pretty-printed on the clipboard unless `raw` is set. */
 export function CopyButton({
   text,
   label,
   disabledReason,
+  raw = false,
 }: {
-  text: () => string | null;
+  text: CopySource;
   label: string;
   disabledReason?: string;
+  raw?: boolean;
 }) {
-  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [state, copy] = useCopy(text, raw);
   return (
     <button
       type="button"
       className="btn btn-small"
       disabled={!!disabledReason}
-      title={disabledReason ?? `Copy ${label.toLowerCase()}`}
-      onClick={async () => {
-        const value = text();
-        if (value === null) return;
-        const ok = await copyText(value);
-        setState(ok ? 'copied' : 'failed');
-        setTimeout(() => setState('idle'), 1200);
-      }}
+      title={disabledReason ?? `${label} to the clipboard`}
+      onClick={copy}
     >
       {state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : label}
     </button>
+  );
+}
+
+/** Compact icon-only copy button for inline values (ids, header values, JSON nodes). */
+export function CopyIcon({ text, label, raw = false }: { text: CopySource; label: string; raw?: boolean }) {
+  const [state, copy] = useCopy(text, raw);
+  return (
+    <button
+      type="button"
+      className={`copy-icon copy-${state}`}
+      title={state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : label}
+      aria-label={label}
+      onClick={(e) => {
+        e.stopPropagation();
+        void copy();
+      }}
+    >
+      {state === 'copied' ? '✓' : state === 'failed' ? '!' : '⧉'}
+    </button>
+  );
+}
+
+/** Preformatted block (stack traces, raw payloads) with a copy button in the corner. */
+export function CodeBlock({
+  text,
+  label = 'Copy',
+  raw = false,
+}: {
+  text: string;
+  label?: string;
+  raw?: boolean;
+}) {
+  return (
+    <div className="code-wrap">
+      <div className="code-toolbar">
+        <CopyIcon label={label} text={() => text} raw={raw} />
+      </div>
+      <pre className="code">{text}</pre>
+    </div>
   );
 }
 
@@ -179,23 +238,35 @@ export function VirtualList<T>({
   );
 }
 
+/**
+ * Name/value table. With `copyable`, each row gets a copy icon: it copies `row.copy`,
+ * or the value itself when it is a string. Rows with neither get no icon.
+ */
 export function KeyValueTable({
   rows,
   empty,
+  copyable = false,
 }: {
-  rows: { name: string; value: ReactNode }[];
+  rows: { name: string; value: ReactNode; copy?: string }[];
   empty: string;
+  copyable?: boolean;
 }) {
   if (!rows.length) return <p className="muted">{empty}</p>;
   return (
     <table className="kv">
       <tbody>
-        {rows.map((r, i) => (
-          <tr key={`${r.name}-${i}`}>
-            <th>{r.name}</th>
-            <td>{r.value}</td>
-          </tr>
-        ))}
+        {rows.map((r, i) => {
+          const copy = r.copy ?? (typeof r.value === 'string' ? r.value : undefined);
+          return (
+            <tr key={`${r.name}-${i}`} className={copyable ? 'kv-copyable' : undefined}>
+              <th>{r.name}</th>
+              <td>
+                {r.value}
+                {copyable && copy !== undefined && <CopyIcon label={`Copy ${r.name}`} text={() => copy} />}
+              </td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );

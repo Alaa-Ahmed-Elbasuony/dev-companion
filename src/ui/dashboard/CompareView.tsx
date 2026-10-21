@@ -4,7 +4,7 @@ import { compareEntries, VOLATILE_HEADERS } from '../../analysis/request-diff';
 import type { BodyDiff, HeaderDiff } from '../../analysis/request-diff';
 import type { ContractBaseline, EntryBodies, NetworkEntry } from '../../shared/types';
 import { clip, endpointKey, formatDuration, tryParseJson } from '../../shared/util';
-import { MethodTag, Notice, StatusPill } from '../components/common';
+import { CopyButton, CopyIcon, MethodTag, Notice, StatusPill } from '../components/common';
 import { getStore, notifyDataChanged } from '../lib/extension';
 
 interface Loaded {
@@ -30,8 +30,8 @@ function HeaderDiffTable({ diff, title }: { diff: HeaderDiff; title: string }) {
   ];
   return (
     <section className="cmp-section">
-      <h3>
-        {title}{' '}
+      <h3 className="section-head">
+        {title} {rows.length > 0 && <CopyButton label="Copy" text={() => JSON.stringify(rows, null, 2)} />}
         <label className="check small">
           <input type="checkbox" checked={showVolatile} onChange={(e) => setShowVolatile(e.target.checked)} />{' '}
           include volatile headers (date, etag…)
@@ -68,7 +68,12 @@ function HeaderDiffTable({ diff, title }: { diff: HeaderDiff; title: string }) {
 function BodyDiffTable({ diff, title }: { diff: BodyDiff; title: string }) {
   return (
     <section className="cmp-section">
-      <h3>{title}</h3>
+      <h3 className="section-head">
+        {title}
+        {diff.mode === 'json' && diff.changes.length > 0 && (
+          <CopyButton label="Copy" text={() => JSON.stringify(diff.changes, null, 2)} />
+        )}
+      </h3>
       {diff.mode === 'unavailable' && <p className="muted">{diff.reason}</p>}
       {diff.mode === 'text' && (
         <p>
@@ -92,9 +97,10 @@ function BodyDiffTable({ diff, title }: { diff: BodyDiff; title: string }) {
             </thead>
             <tbody>
               {diff.changes.map((c) => (
-                <tr key={`${c.kind}-${c.path}`} className={`diff-${c.kind}`}>
+                <tr key={`${c.kind}-${c.path}`} className={`diff-${c.kind} copy-reveal`}>
                   <td>
                     <code>{c.path}</code>
+                    <CopyIcon label="Copy path" text={() => c.path} />
                   </td>
                   <td>
                     {c.kind}

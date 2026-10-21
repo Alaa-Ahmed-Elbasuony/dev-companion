@@ -440,6 +440,67 @@ ul.plain {
   right: 4px;
   top: 4px;
 }
+.code-toolbar {
+  display: flex;
+  gap: 4px;
+  z-index: 1;
+}
+.copy-icon {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  min-width: 20px;
+  padding: 2px 4px;
+  margin-left: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-2);
+  color: var(--muted);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.copy-icon:hover,
+.copy-icon:focus-visible {
+  color: var(--fg);
+  background: var(--bg-3);
+}
+.copy-copied {
+  color: var(--status-ok);
+}
+.copy-failed {
+  color: var(--err);
+}
+/* Inline copy icons appear on row hover/focus so tables stay quiet. */
+.kv-copyable .copy-icon,
+.jt-row .copy-icon,
+.jt-toggle-row .copy-icon,
+.copy-reveal .copy-icon {
+  opacity: 0;
+}
+.kv-copyable:hover .copy-icon,
+.kv-copyable:focus-within .copy-icon,
+.jt-row:hover > .copy-icon,
+.jt-toggle-row:hover > .copy-icon,
+.copy-reveal:hover .copy-icon,
+.copy-icon:focus-visible,
+.copy-icon.copy-copied {
+  opacity: 1;
+}
+.json-tree-wrap {
+  position: relative;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-bottom: 6px;
+}
 .code {
   margin: 0;
   padding: 8px 10px;

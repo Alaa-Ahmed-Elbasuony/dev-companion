@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compareToShape, inferShape, validateJsonSchema } from '../../src/analysis/contracts';
 import { correlate } from '../../src/analysis/correlate';
-import { buildCurl, curlForEntry, shellQuote } from '../../src/analysis/curl';
+import { buildCurl, buildFetch, curlForEntry, fetchForEntry, shellQuote } from '../../src/analysis/curl';
 import {
   EMPTY_FILTER,
   advancedFilterCount,
@@ -253,9 +253,48 @@ describe('cURL', () => {
       body: `{"note":"it's"}`,
     });
     expect(command).toBe(
-      `curl -X POST 'https://api.test/orders' -H 'content-type: application/json' --data-raw '{"note":"it'\\''s"}'`,
+      [
+        `curl 'https://api.test/orders' \\`,
+        `  -X POST \\`,
+        `  -H 'content-type: application/json' \\`,
+        `  --data-raw '{"note":"it'\\''s"}'`,
+      ].join('\n'),
     );
     expect(omittedHeaders).toEqual(['authorization']);
+  });
+
+  it('builds an editable fetch call with a pretty JSON body and no redacted headers', () => {
+    const { code, omittedHeaders } = buildFetch({
+      method: 'post',
+      url: 'https://api.test/orders',
+      headers: [
+        { name: 'content-type', value: 'application/json' },
+        { name: 'authorization', value: '[REDACTED]' },
+      ],
+      body: '{"qty":2}',
+    });
+    expect(code).toBe(
+      [
+        'await fetch("https://api.test/orders", {',
+        '  method: "POST",',
+        '  headers: {',
+        '    "content-type": "application/json"',
+        '  },',
+        '  body: JSON.stringify({',
+        '    "qty": 2',
+        '  }),',
+        '});',
+      ].join('\n'),
+    );
+    expect(omittedHeaders).toEqual(['authorization']);
+    expect(buildFetch({ method: 'GET', url: 'https://a.test/x', headers: [] }).code).toBe(
+      'await fetch("https://a.test/x");',
+    );
+    expect(buildFetch({ method: 'PUT', url: 'https://a.test/x', headers: [], body: 'a=1' }).code).toContain(
+      'body: "a=1"',
+    );
+    const e = entry({ method: 'POST' });
+    expect(fetchForEntry(e, { id: e.id, request: { kind: 'binary', size: 10 } }).ok).toBe(false);
   });
 
   it('refuses to build cURL when the body was truncated or not captured', () => {

@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { correlate } from '../../analysis/correlate';
 import type { TimelineKind } from '../../shared/types';
-import { Notice } from '../components/common';
+import { CodeBlock, CopyButton, Notice } from '../components/common';
 import { ActiveFilters, Badge, EmptyState, RelationBadge } from '../components/ui';
 import type { Chip } from '../components/ui';
 import type { ViewProps } from './context';
@@ -115,6 +115,16 @@ export function ConsoleView(props: ViewProps) {
                     </span>
                   )}
                   <span className="spacer" />
+                  <CopyButton
+                    label="Copy"
+                    // Error stacks usually start with the message; avoid repeating it.
+                    text={() =>
+                      t.stack && !t.stack.includes(t.message)
+                        ? `${t.message}\n${t.stack}`
+                        : (t.stack ?? t.message)
+                    }
+                    raw
+                  />
                   <button
                     type="button"
                     className="btn btn-small"
@@ -127,7 +137,7 @@ export function ConsoleView(props: ViewProps) {
                 {t.stack && (
                   <details>
                     <summary className="small">Stack trace</summary>
-                    <pre className="code">{t.stack}</pre>
+                    <CodeBlock text={t.stack} label="Copy stack trace" raw />
                   </details>
                 )}
                 {related.length > 0 && (

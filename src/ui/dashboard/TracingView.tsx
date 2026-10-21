@@ -4,8 +4,9 @@
 import { useMemo, useState } from 'react';
 import type { ServerSpan, TimelineEvent } from '../../shared/types';
 import { formatBytes, formatDuration } from '../../shared/util';
-import { KeyValueTable, Notice } from '../components/common';
+import { CodeBlock, CopyButton, CopyIcon, KeyValueTable, Notice } from '../components/common';
 import { Badge, EmptyState, JsonTree, RelationBadge } from '../components/ui';
+import { recordForCopy } from '../lib/copy-format';
 import { sendToWorker } from '../lib/extension';
 import type { ViewProps } from './context';
 
@@ -266,6 +267,7 @@ export function TracingView(props: ViewProps) {
             <section className="waterfall-pane" aria-label="Trace waterfall">
               <h2 className="break">
                 {trace.root.name} <span className="muted small mono">trace {trace.traceId}</span>
+                <CopyIcon label="Copy trace id" text={() => trace.traceId} />
               </h2>
               <div className="trace-links">
                 {browserLinks(trace.traceId).map((l, i) => (
@@ -369,6 +371,7 @@ function SpanDetails({ span, onInvestigate }: { span: ServerSpan; onInvestigate:
         <button type="button" className="btn btn-small btn-primary" onClick={onInvestigate}>
           Investigate
         </button>
+        <CopyButton label="Copy span JSON" text={() => JSON.stringify(span, null, 2)} />
       </div>
       <KeyValueTable
         rows={[
@@ -378,7 +381,9 @@ function SpanDetails({ span, onInvestigate }: { span: ServerSpan; onInvestigate:
             value: `${span.kind}${span.outbound ? ' (outbound call made by the server)' : ''}`,
           },
           ...(span.phase ? [{ name: 'Phase', value: span.phase }] : []),
-          ...(span.httpUrl ? [{ name: 'URL', value: <span className="break">{span.httpUrl}</span> }] : []),
+          ...(span.httpUrl
+            ? [{ name: 'URL', value: <span className="break">{span.httpUrl}</span>, copy: span.httpUrl }]
+            : []),
           ...(span.httpStatus !== undefined ? [{ name: 'Status', value: String(span.httpStatus) }] : []),
           {
             name: 'Span status',
@@ -392,8 +397,10 @@ function SpanDetails({ span, onInvestigate }: { span: ServerSpan; onInvestigate:
             name: 'Reported by',
             value: `${span.source}${span.instrumentation ? ` · ${span.instrumentation}` : ''}${span.serviceName ? ` · service ${span.serviceName}` : ''}`,
           },
-          { name: 'Span id', value: <code>{span.spanId}</code> },
+          { name: 'Span id', value: <code>{span.spanId}</code>, copy: span.spanId },
+          { name: 'Trace id', value: <code>{span.traceId}</code>, copy: span.traceId },
         ]}
+        copyable
         empty=""
       />
       {span.events.map((e, i) => (
@@ -401,14 +408,14 @@ function SpanDetails({ span, onInvestigate }: { span: ServerSpan; onInvestigate:
           <strong>{e.name}</strong> {String(e.attributes?.['exception.type'] ?? '')}{' '}
           {String(e.attributes?.['exception.message'] ?? '')}
           {e.attributes?.['exception.stacktrace'] && (
-            <pre className="code">{String(e.attributes['exception.stacktrace'])}</pre>
+            <CodeBlock text={String(e.attributes['exception.stacktrace'])} label="Copy stack trace" raw />
           )}
         </Notice>
       ))}
       {span.requestBody && (
         <>
           <h3>Request body</h3>
-          <pre className="code">{span.requestBody}</pre>
+          <CodeBlock text={span.requestBody} label="Copy request body" />
         </>
       )}
       {span.responseBody && (
@@ -417,15 +424,22 @@ function SpanDetails({ span, onInvestigate }: { span: ServerSpan; onInvestigate:
           {/^\s*[{[]/.test(span.responseBody) ? (
             <JsonTree text={span.responseBody} />
           ) : (
-            <pre className="code">{span.responseBody}</pre>
+            <CodeBlock text={span.responseBody} label="Copy response body" />
           )}
         </>
       )}
-      <h3>Attributes</h3>
+      <h3 className="section-head">
+        Attributes
+        {Object.keys(span.attributes).length > 0 && (
+          <CopyButton label="Copy as JSON" text={() => recordForCopy(span.attributes)} />
+        )}
+      </h3>
       <KeyValueTable
+        copyable
         rows={Object.entries(span.attributes).map(([name, v]) => ({
           name,
           value: <span className="break">{String(v)}</span>,
+          copy: String(v),
         }))}
         empty="No attributes."
       />

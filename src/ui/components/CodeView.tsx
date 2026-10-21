@@ -4,7 +4,8 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { CapturedBody } from '../../shared/types';
 import { formatBytes, tryParseJson } from '../../shared/util';
-import { CopyButton, Notice } from './common';
+import { queryForCopy } from '../lib/copy-format';
+import { CopyButton, CopyIcon, Notice } from './common';
 
 const HIGHLIGHT_LIMIT = 200_000;
 const TOKEN = /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
@@ -49,13 +50,15 @@ export function CodeView({ text, json }: { text: string; json?: boolean }) {
   const content = parsed.ok && display.length <= HIGHLIGHT_LIMIT ? highlightJson(display) : display;
   return (
     <div className="code-wrap">
-      {parsed.ok && (
-        <div className="code-toolbar">
+      <div className="code-toolbar">
+        {parsed.ok && (
           <button type="button" className="btn btn-small btn-ghost" onClick={() => setPretty((p) => !p)}>
             {pretty ? 'Raw' : 'Pretty'}
           </button>
-        </div>
-      )}
+        )}
+        {/* Copies exactly what is shown: pretty or raw. */}
+        <CopyIcon label={pretty ? 'Copy' : 'Copy raw'} text={() => display} raw />
+      </div>
       <pre className="code">{content}</pre>
     </div>
   );
@@ -88,9 +91,12 @@ export function FormView({ text }: { text: string }) {
     <div className="code-wrap">
       <div className="form-toolbar">
         <span className="muted small">{fields.length} field(s)</span>
-        <button type="button" className="btn btn-small btn-ghost" onClick={() => setRaw((r) => !r)}>
-          {raw ? 'Fields' : 'Raw'}
-        </button>
+        <span>
+          <CopyButton label="Copy as JSON" text={() => queryForCopy(fields.map((f) => [f.name, f.value]))} />{' '}
+          <button type="button" className="btn btn-small btn-ghost" onClick={() => setRaw((r) => !r)}>
+            {raw ? 'Fields' : 'Raw'}
+          </button>
+        </span>
       </div>
       {raw ? (
         <pre className="code">{text}</pre>
@@ -98,10 +104,11 @@ export function FormView({ text }: { text: string }) {
         <table className="kv form-fields">
           <tbody>
             {fields.map((f, i) => (
-              <tr key={`${f.name}-${i}`}>
+              <tr key={`${f.name}-${i}`} className="kv-copyable">
                 <th>{f.name}</th>
                 <td>
                   <FormFieldValue value={f.value} />
+                  <CopyIcon label={`Copy ${f.name}`} text={() => f.value} />
                 </td>
               </tr>
             ))}
