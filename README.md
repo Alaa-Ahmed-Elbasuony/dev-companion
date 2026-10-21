@@ -27,64 +27,75 @@ Not implemented: decoding binary realtime protocols (SignalR MessagePack, binary
 
 ## Getting started
 
-You only need **Git**, **Node.js** and **Chrome**.
+Follow these steps in order. Steps 1–4 are needed only once.
 
-### 1. Install the tools (one time)
+### Step 1: Install Git and Node.js
 
-1. **Git:** download it from <https://git-scm.com/downloads> and install it with the default options.
-2. **Node.js:** download the **LTS** version from <https://nodejs.org> and install it with the default options (npm comes with it). Version 20.19+ or 22.12+ is required.
-3. **Chrome** version 120 or newer (Edge, Brave and other Chromium browsers also work).
+1. Install **Git** from <https://git-scm.com/downloads>. Keep the default options.
+2. Install **Node.js** from <https://nodejs.org>. Pick the **LTS** version and keep the default options.
+3. Use **Chrome** (or Edge / Brave), version 120 or newer.
 
-To check, open a **new** terminal (PowerShell, Command Prompt or Terminal) and run:
+### Step 2: Download the project
 
-```bash
-git --version
-node --version
-```
+1. Open **Command Prompt**: press the Windows key, type `cmd`, press Enter. (On Mac or Linux, open **Terminal**.)
+2. Paste these lines and press Enter:
 
-Both commands should print a version number.
+   ```bash
+   cd Documents
+   git clone https://github.com/Alaa-Ahmed-Elbasuony/dev-companion.git
+   cd dev-companion
+   ```
 
-### 2. Download the project (one time)
+The project is now in your **Documents\dev-companion** folder.
 
-```bash
-git clone https://github.com/Alaa-Ahmed-Elbasuony/dev-companion.git
-cd dev-companion
-```
+### Step 3: Build the extension
 
-### 3. Build the extension
+In the same window, run:
 
 ```bash
 npm install
 npm run build
 ```
 
-This creates a `dist` folder inside the project. That folder is the extension.
+Wait until it finishes. A new folder appears: **Documents\dev-companion\dist**. This folder is the extension.
 
-### 4. Add it to Chrome (one time)
+### Step 4: Add the extension to Chrome
 
-1. Open `chrome://extensions` in Chrome.
+1. In Chrome, go to `chrome://extensions`.
 2. Turn on **Developer mode** (switch in the top-right corner).
-3. Click **Load unpacked** and select the **`dist`** folder inside `dev-companion`. Don't select the project folder itself.
-4. Click the puzzle icon in the toolbar and pin **Dev Companion** so it's easy to reach.
+3. Click **Load unpacked**.
+4. Open **Documents → dev-companion → dist** and click **Select Folder**.
+5. Click the puzzle icon 🧩 in the Chrome toolbar and pin **Dev Companion**.
 
-### 5. Use it
+Don't delete or move the `dev-companion` folder. Chrome loads the extension from it.
+
+### Step 5: Use it
 
 1. Open the website you want to debug.
-2. Click the Dev Companion icon, then **Start recording this site**, and allow access when Chrome asks.
+2. Click the **Dev Companion** icon, then **Start recording this site**. Click **Allow** if Chrome asks.
 3. Reload the page and use the site as usual.
-4. Click **Open debugging workspace** to see the captured requests, errors and events.
+4. Click the Dev Companion icon again, then **Open debugging workspace** to see the requests, errors and events.
 
-### Get the latest version
+### Update to the latest version
 
-Inside the `dev-companion` folder, run:
+1. Open **Command Prompt** and run:
 
-```bash
-git pull
-npm install
-npm run build
-```
+   ```bash
+   cd Documents\dev-companion
+   git pull
+   npm install
+   npm run build
+   ```
 
-Then open `chrome://extensions` and click the **reload** icon (↻) on the Dev Companion card. Reload the pages you're debugging too.
+2. In Chrome, go to `chrome://extensions` and click the reload icon ↻ on the **Dev Companion** card.
+3. Reload the pages you are debugging.
+
+### If something goes wrong
+
+- **`git` or `npm` is "not recognized":** close Command Prompt, open a new one and try again. If it still fails, reinstall Git or Node.js.
+- **"running scripts is disabled on this system":** you are in PowerShell. Use **Command Prompt** (`cmd`) instead.
+- **Chrome says "Manifest file is missing":** you selected the wrong folder. Select **`dist`**, not `dev-companion`.
+- **Nothing is recorded:** reload the page after clicking **Start recording this site**.
 
 ## Quick start
 
