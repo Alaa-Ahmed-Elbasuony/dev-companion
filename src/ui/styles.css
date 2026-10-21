@@ -629,6 +629,59 @@ body.popup {
   flex: 1 1 260px;
   min-width: 180px;
 }
+.advanced-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px 16px;
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.adv-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.adv-wide,
+.adv-footer {
+  grid-column: 1 / -1;
+}
+.adv-wide .chip-group {
+  flex-wrap: wrap;
+}
+.adv-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.adv-range {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.adv-range input {
+  flex: 1;
+  min-width: 0;
+}
+.adv-error {
+  font-size: 11px;
+  color: var(--err);
+}
+.adv-field input[aria-invalid='true'] {
+  border-color: var(--err);
+}
+.adv-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.link:disabled {
+  color: var(--muted);
+  cursor: default;
+  text-decoration: none;
+}
 .toolbar {
   display: flex;
   gap: 6px;

@@ -1,11 +1,18 @@
 // Request explorer: dense, sortable, filterable list (virtualized) with a
 // details panel beside it, so the list keeps its scroll position.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
-import { filterEntries, isFailure, statusClass } from '../../analysis/filter';
+import type { CSSProperties, InputHTMLAttributes, PointerEvent as ReactPointerEvent } from 'react';
+import {
+  advancedFilterCount,
+  filterEntries,
+  isFailure,
+  parseQuery,
+  parseStatusCodes,
+  statusClass,
+} from '../../analysis/filter';
 import type { RequestFilter, StatusFilter } from '../../analysis/filter';
 import type { CaptureSource, NetworkEntry } from '../../shared/types';
-import { MUTATING_METHODS, formatDuration, safeUrl } from '../../shared/util';
+import { MUTATING_METHODS, formatBytes, formatDuration, safeUrl } from '../../shared/util';
 import { MethodTag, Notice, StatusPill, VirtualList } from '../components/common';
 import { ActiveFilters, ConfirmDialog, EmptyState } from '../components/ui';
 import type { Chip } from '../components/ui';
@@ -64,6 +71,50 @@ interface NetworkFilter extends RequestFilter {
   range: string;
 }
 
+function numParam(v: string | undefined): number | undefined {
+  if (!v) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+function kbParam(v: string | undefined): number | undefined {
+  const n = numParam(v);
+  return n === undefined ? undefined : Math.round(n * 1024);
+}
+
+/** Non-negative number from an input, or undefined when empty/invalid. */
+function numInput(value: string, scale = 1): number | undefined {
+  if (value === '') return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * scale) : undefined;
+}
+
+const TYPE_PRESETS: { id: string; label: string }[] = [
+  { id: '', label: 'All types' },
+  { id: 'fetch,xhr', label: 'Fetch/XHR' },
+  ...SOURCES.map((s) => ({ id: s, label: `${s} only` })),
+];
+
+/** Text input that commits to the URL after a pause, so typing stays responsive. */
+function DraftInput({
+  value,
+  onCommit,
+  ...rest
+}: { value: string; onCommit: (v: string) => void } & Omit<
+  InputHTMLAttributes<HTMLInputElement>,
+  'value' | 'onChange'
+>) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  useEffect(() => {
+    if (draft === value) return;
+    const t = setTimeout(() => onCommit(draft), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft]);
+  return <input {...rest} value={draft} onChange={(e) => setDraft(e.target.value)} />;
+}
+
 function fromParams(p: Record<string, string>, slowMs: number): NetworkFilter {
   const preset = p.preset;
   return {
@@ -75,8 +126,18 @@ function fromParams(p: Record<string, string>, slowMs: number): NetworkFilter {
         : preset === 'pending'
           ? 'pending'
           : 'all',
-    sources: p.type && SOURCES.includes(p.type as CaptureSource) ? [p.type as CaptureSource] : [],
+    sources: p.type
+      ? (p.type.split(',').filter((t) => SOURCES.includes(t as CaptureSource)) as CaptureSource[])
+      : [],
     minDurationMs: p.min ? Number(p.min) : preset === 'slow' ? slowMs : undefined,
+    maxDurationMs: numParam(p.max),
+    codes: p.codes ?? '',
+    hosts: p.host ?? '',
+    contentType: p.ct ?? '',
+    minSizeBytes: kbParam(p.minkb),
+    maxSizeBytes: kbParam(p.maxkb),
+    hasWarnings: p.warn === '1',
+    redirected: p.redir === '1',
     problems: p.problems === '1' || preset === 'failed',
     mutations: p.mutations === '1' || preset === 'mutations',
     range: p.range ?? '',
@@ -89,8 +150,16 @@ function toParams(f: NetworkFilter, extra: Record<string, string>): Record<strin
     q: f.text,
     methods: f.methods.join(','),
     status: f.status === 'all' ? '' : f.status,
-    type: f.sources[0] ?? '',
+    type: f.sources.join(','),
     min: f.minDurationMs !== undefined ? String(f.minDurationMs) : '',
+    max: f.maxDurationMs !== undefined ? String(f.maxDurationMs) : '',
+    codes: f.codes?.trim() ?? '',
+    host: f.hosts?.trim() ?? '',
+    ct: f.contentType?.trim() ?? '',
+    minkb: f.minSizeBytes !== undefined ? String(f.minSizeBytes / 1024) : '',
+    maxkb: f.maxSizeBytes !== undefined ? String(f.maxSizeBytes / 1024) : '',
+    warn: f.hasWarnings ? '1' : '',
+    redir: f.redirected ? '1' : '',
     problems: f.problems ? '1' : '',
     mutations: f.mutations ? '1' : '',
     range: f.range,
@@ -125,6 +194,24 @@ export function NetworkView(props: ViewProps) {
   const selectedId = params.id ?? null;
   const [text, setText] = useState(filter.text);
   const [searchBodies, setSearchBodies] = useState(true);
+  const advancedCount = advancedFilterCount(filter);
+  const [advancedOpen, setAdvancedOpen] = useState(advancedCount > 0);
+  const codeErrors = useMemo(() => parseStatusCodes(filter.codes ?? '').invalid, [filter.codes]);
+  const knownHosts = useMemo(
+    () => [...new Set(entries.map((e) => safeUrl(e.url)?.host).filter((h): h is string => !!h))].sort(),
+    [entries],
+  );
+  const knownContentTypes = useMemo(
+    () =>
+      [
+        ...new Set(
+          entries
+            .map((e) => e.responseContentType?.split(';')[0]?.trim().toLowerCase())
+            .filter((c): c is string => !!c),
+        ),
+      ].sort(),
+    [entries],
+  );
   const [bodyMatches, setBodyMatches] = useState<Set<string> | undefined>();
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [exportOpen, setExportOpen] = useState(false);
@@ -187,7 +274,7 @@ export function NetworkView(props: ViewProps) {
   }, [text]);
 
   useEffect(() => {
-    const query = filter.text.trim();
+    const query = parseQuery(filter.text).include.join(' ');
     if (!searchBodies || query.length < 2) {
       setBodyMatches(undefined);
       return;
@@ -279,8 +366,48 @@ export function NetworkView(props: ViewProps) {
       label: STATUS_LABEL[filter.status],
       onRemove: () => update({ status: 'all' }),
     });
-  if (filter.sources[0])
-    chips.push({ id: 'type', label: `type: ${filter.sources[0]}`, onRemove: () => update({ sources: [] }) });
+  if (filter.sources.length)
+    chips.push({
+      id: 'type',
+      label: `type: ${filter.sources.join(' / ')}`,
+      onRemove: () => update({ sources: [] }),
+    });
+  if (filter.maxDurationMs !== undefined)
+    chips.push({
+      id: 'max',
+      label: `≤ ${filter.maxDurationMs} ms`,
+      onRemove: () => update({ maxDurationMs: undefined }),
+    });
+  if (filter.codes?.trim())
+    chips.push({
+      id: 'codes',
+      label: `status: ${filter.codes.trim()}`,
+      onRemove: () => update({ codes: '' }),
+    });
+  if (filter.hosts?.trim())
+    chips.push({ id: 'host', label: `host: ${filter.hosts.trim()}`, onRemove: () => update({ hosts: '' }) });
+  if (filter.contentType?.trim())
+    chips.push({
+      id: 'ct',
+      label: `content-type: ${filter.contentType.trim()}`,
+      onRemove: () => update({ contentType: '' }),
+    });
+  if (filter.minSizeBytes !== undefined || filter.maxSizeBytes !== undefined)
+    chips.push({
+      id: 'size',
+      label: [
+        'size',
+        filter.minSizeBytes !== undefined ? `≥ ${formatBytes(filter.minSizeBytes)}` : '',
+        filter.maxSizeBytes !== undefined ? `≤ ${formatBytes(filter.maxSizeBytes)}` : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
+      onRemove: () => update({ minSizeBytes: undefined, maxSizeBytes: undefined }),
+    });
+  if (filter.hasWarnings)
+    chips.push({ id: 'warn', label: 'has warnings', onRemove: () => update({ hasWarnings: false }) });
+  if (filter.redirected)
+    chips.push({ id: 'redir', label: 'redirected', onRemove: () => update({ redirected: false }) });
   if (filter.minDurationMs !== undefined)
     chips.push({
       id: 'min',
@@ -440,15 +567,19 @@ export function NetworkView(props: ViewProps) {
           </select>
           <select
             aria-label="Type filter"
-            value={filter.sources[0] ?? ''}
-            onChange={(e) => update({ sources: e.target.value ? [e.target.value as CaptureSource] : [] })}
+            value={filter.sources.join(',')}
+            onChange={(e) =>
+              update({ sources: e.target.value ? (e.target.value.split(',') as CaptureSource[]) : [] })
+            }
           >
-            <option value="">All types</option>
-            {SOURCES.map((s) => (
-              <option key={s} value={s}>
-                {s}
+            {TYPE_PRESETS.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
               </option>
             ))}
+            {!TYPE_PRESETS.some((t) => t.id === filter.sources.join(',')) && (
+              <option value={filter.sources.join(',')}>{filter.sources.join(' / ')}</option>
+            )}
           </select>
           <label className="check">
             ≥
@@ -489,7 +620,177 @@ export function NetworkView(props: ViewProps) {
             <option value="status">Status (errors first)</option>
             <option value="method">Method</option>
           </select>
+          <button
+            type="button"
+            className={`btn btn-small ${advancedCount ? 'btn-primary' : ''}`}
+            aria-expanded={advancedOpen}
+            aria-controls="advanced-filters"
+            onClick={() => setAdvancedOpen((o) => !o)}
+          >
+            Advanced{advancedCount ? ` (${advancedCount})` : ''} {advancedOpen ? '▴' : '▾'}
+          </button>
         </div>
+
+        {advancedOpen && (
+          <div id="advanced-filters" className="advanced-filters" role="group" aria-label="Advanced filters">
+            <div className="adv-field adv-wide">
+              <span className="adv-label">Types</span>
+              <div className="chip-group">
+                {SOURCES.map((s) => {
+                  const on = filter.sources.includes(s);
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      className={`chip ${on ? 'chip-on' : ''}`}
+                      aria-pressed={on}
+                      onClick={() =>
+                        update({
+                          sources: on ? filter.sources.filter((x) => x !== s) : [...filter.sources, s],
+                        })
+                      }
+                    >
+                      {s}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <label className="adv-field">
+              <span className="adv-label">Status codes</span>
+              <DraftInput
+                type="text"
+                placeholder="200, 4xx, 500-599, !404"
+                aria-invalid={codeErrors.length > 0}
+                value={filter.codes ?? ''}
+                onCommit={(codes) => update({ codes })}
+              />
+              {codeErrors.length > 0 && <span className="adv-error">Ignored: {codeErrors.join(', ')}</span>}
+            </label>
+            <label className="adv-field">
+              <span className="adv-label">Host contains</span>
+              <DraftInput
+                type="text"
+                list="adv-hosts"
+                placeholder="api.example.com, cdn"
+                value={filter.hosts ?? ''}
+                onCommit={(hosts) => update({ hosts })}
+              />
+              <datalist id="adv-hosts">
+                {knownHosts.map((h) => (
+                  <option key={h} value={h} />
+                ))}
+              </datalist>
+            </label>
+            <label className="adv-field">
+              <span className="adv-label">Response content type</span>
+              <DraftInput
+                type="text"
+                list="adv-content-types"
+                placeholder="json"
+                value={filter.contentType ?? ''}
+                onCommit={(contentType) => update({ contentType })}
+              />
+              <datalist id="adv-content-types">
+                {knownContentTypes.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+            </label>
+            <div className="adv-field">
+              <span className="adv-label">Duration (ms)</span>
+              <div className="adv-range">
+                <input
+                  type="number"
+                  min={0}
+                  step={100}
+                  placeholder="min"
+                  aria-label="Minimum duration in milliseconds"
+                  value={filter.minDurationMs ?? ''}
+                  onChange={(e) => update({ minDurationMs: numInput(e.target.value) })}
+                />
+                <span className="muted">–</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={100}
+                  placeholder="max"
+                  aria-label="Maximum duration in milliseconds"
+                  value={filter.maxDurationMs ?? ''}
+                  onChange={(e) => update({ maxDurationMs: numInput(e.target.value) })}
+                />
+              </div>
+            </div>
+            <div className="adv-field">
+              <span className="adv-label">Response size (KB)</span>
+              <div className="adv-range">
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  placeholder="min"
+                  aria-label="Minimum response size in kilobytes"
+                  value={filter.minSizeBytes !== undefined ? filter.minSizeBytes / 1024 : ''}
+                  onChange={(e) => update({ minSizeBytes: numInput(e.target.value, 1024) })}
+                />
+                <span className="muted">–</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  placeholder="max"
+                  aria-label="Maximum response size in kilobytes"
+                  value={filter.maxSizeBytes !== undefined ? filter.maxSizeBytes / 1024 : ''}
+                  onChange={(e) => update({ maxSizeBytes: numInput(e.target.value, 1024) })}
+                />
+              </div>
+            </div>
+            <div className="adv-field">
+              <span className="adv-label">Only</span>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={!!filter.hasWarnings}
+                  onChange={(e) => update({ hasWarnings: e.target.checked })}
+                />{' '}
+                with warnings
+              </label>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={!!filter.redirected}
+                  onChange={(e) => update({ redirected: e.target.checked })}
+                />{' '}
+                redirected
+              </label>
+            </div>
+            <div className="adv-footer">
+              <span className="muted small">
+                Tip: prefix a search word with <code>-</code> to exclude it, e.g. <code>-analytics</code>.
+              </span>
+              <button
+                type="button"
+                className="link small"
+                disabled={!advancedCount}
+                onClick={() =>
+                  update({
+                    sources: [],
+                    maxDurationMs: undefined,
+                    codes: '',
+                    hosts: '',
+                    contentType: '',
+                    minSizeBytes: undefined,
+                    maxSizeBytes: undefined,
+                    hasWarnings: false,
+                    redirected: false,
+                  })
+                }
+              >
+                Reset advanced
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="toolbar">
           <ActiveFilters

@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { compareToShape, inferShape, validateJsonSchema } from '../../src/analysis/contracts';
 import { correlate } from '../../src/analysis/correlate';
 import { buildCurl, curlForEntry, shellQuote } from '../../src/analysis/curl';
-import { EMPTY_FILTER, filterEntries, statusClass } from '../../src/analysis/filter';
+import {
+  EMPTY_FILTER,
+  advancedFilterCount,
+  filterEntries,
+  parseQuery,
+  parseStatusCodes,
+  statusClass,
+} from '../../src/analysis/filter';
 import { compareEntries, diffHeaders, diffJson } from '../../src/analysis/request-diff';
 import { endpointKey } from '../../src/shared/util';
 import { entry, jsonBodies, timelineEvent } from '../helpers/entries';
@@ -45,6 +52,51 @@ describe('request filtering', () => {
     expect(ids({ status: 'failed' })).toEqual(['c']);
     expect(ids({ sources: ['xhr'] })).toEqual(['c']);
     expect(ids({ minDurationMs: 1000 })).toEqual(['b']);
+  });
+  it('matches multiple types, status code expressions, hosts and max duration', () => {
+    expect(ids({ sources: ['fetch', 'xhr'] })).toEqual(['a', 'b', 'c', 'd']);
+    expect(ids({ codes: '4xx' })).toEqual(['a']);
+    expect(ids({ codes: '400-599, !500' })).toEqual(['a']);
+    expect(ids({ codes: '!200' })).toEqual(['a', 'c', 'd']);
+    expect(ids({ codes: 'nonsense' })).toEqual(['a', 'b', 'c', 'd']);
+    expect(ids({ hosts: 'cdn' })).toEqual(['c']);
+    expect(ids({ hosts: 'nope, CDN.test' })).toEqual(['c']);
+    expect(ids({ maxDurationMs: 150 })).toEqual(['a', 'c', 'd']);
+  });
+  it('excludes -tokens from search, even when the body matched', () => {
+    expect(ids({ text: '/api -orders' })).toEqual(['b']);
+    expect(ids({ text: '-api' })).toEqual(['c']);
+    expect(ids({ text: 'OUT_OF_STOCK -post' }, new Set(['a']))).toEqual([]);
+  });
+  it('filters by content type, response size and flags', () => {
+    const more = [
+      entry({ id: 'j', responseContentType: 'application/json; charset=utf-8', responseBodySize: 2048 }),
+      entry({ id: 'h', responseContentType: 'text/html', responseBodySize: 50, warnings: ['x'] }),
+      entry({ id: 'r', redirected: true }),
+    ];
+    const pick = (f: Partial<typeof EMPTY_FILTER>) =>
+      filterEntries(more, { ...EMPTY_FILTER, ...f }).map((e) => e.id);
+    expect(pick({ contentType: 'JSON' })).toEqual(['j']);
+    expect(pick({ minSizeBytes: 1024 })).toEqual(['j']);
+    expect(pick({ maxSizeBytes: 100 })).toEqual(['h']);
+    expect(pick({ hasWarnings: true })).toEqual(['h']);
+    expect(pick({ redirected: true })).toEqual(['r']);
+  });
+  it('parses status code expressions and counts advanced criteria', () => {
+    expect(parseStatusCodes('200 4xx 500-503 -404 abc 599-500')).toEqual({
+      include: [
+        [200, 200],
+        [400, 499],
+        [500, 503],
+      ],
+      exclude: [[404, 404]],
+      invalid: ['abc', '599-500'],
+    });
+    expect(parseQuery('GET -Analytics -')).toEqual({ include: ['get', '-'], exclude: ['analytics'] });
+    expect(advancedFilterCount(EMPTY_FILTER)).toBe(0);
+    expect(advancedFilterCount({ ...EMPTY_FILTER, sources: ['xhr'], codes: '5xx', hasWarnings: true })).toBe(
+      2,
+    );
   });
   it('classifies statuses', () => {
     expect(statusClass(entry({ state: 'pending' }))).toBe('pending');
