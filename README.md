@@ -25,26 +25,66 @@ Typical use: you click **Create Order**, the UI shows an error, and the `POST /a
 
 Not implemented: decoding binary realtime protocols (SignalR MessagePack, binary Socket.IO attachments), capture inside Web Workers and iframes, source-map resolution, React-specific integrations, AI-assisted diagnosis, and throttling or failure simulation. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#known-limitations) for the full list.
 
-## Requirements
+## Getting started
 
-- Chrome or another Chromium browser, version 120 or newer.
-- Node.js 20.19+ or 22.12+ (developed with Node 22.16 and npm 10.9).
+You only need **Git**, **Node.js** and **Chrome**.
 
-## Install and build
+### 1. Install the tools (one time)
+
+1. **Git:** download it from <https://git-scm.com/downloads> and install it with the default options.
+2. **Node.js:** download the **LTS** version from <https://nodejs.org> and install it with the default options (npm comes with it). Version 20.19+ or 22.12+ is required.
+3. **Chrome** version 120 or newer (Edge, Brave and other Chromium browsers also work).
+
+To check, open a **new** terminal (PowerShell, Command Prompt or Terminal) and run:
+
+```bash
+git --version
+node --version
+```
+
+Both commands should print a version number.
+
+### 2. Download the project (one time)
+
+```bash
+git clone https://github.com/Alaa-Ahmed-Elbasuony/dev-companion.git
+cd dev-companion
+```
+
+### 3. Build the extension
 
 ```bash
 npm install
-npm run build        # outputs dist/
+npm run build
 ```
 
-Then load it in Chrome:
+This creates a `dist` folder inside the project. That folder is the extension.
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode**.
-3. Click **Load unpacked** and select the **`dist/`** folder. Do not select the repository root or `src/`.
-4. Optionally, pin Dev Companion to the toolbar.
+### 4. Add it to Chrome (one time)
 
-After changing code, rebuild and click the reload icon on the extension's card in `chrome://extensions`. Reload the pages you are debugging too.
+1. Open `chrome://extensions` in Chrome.
+2. Turn on **Developer mode** (switch in the top-right corner).
+3. Click **Load unpacked** and select the **`dist`** folder inside `dev-companion`. Don't select the project folder itself.
+4. Click the puzzle icon in the toolbar and pin **Dev Companion** so it's easy to reach.
+
+### 5. Use it
+
+1. Open the website you want to debug.
+2. Click the Dev Companion icon, then **Start recording this site**, and allow access when Chrome asks.
+3. Reload the page and use the site as usual.
+4. Click **Open debugging workspace** to see the captured requests, errors and events.
+
+### Get the latest version
+
+Inside the `dev-companion` folder, run:
+
+```bash
+git pull
+npm install
+npm run build
+```
+
+Then open `chrome://extensions` and click the **reload** icon (↻) on the Dev Companion card. Reload the pages you're debugging too.
 
 ## Quick start
 
