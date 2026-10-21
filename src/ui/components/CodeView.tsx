@@ -112,6 +112,16 @@ export function FormView({ text }: { text: string }) {
   );
 }
 
+/** Body text as it should land on the clipboard: JSON pretty-printed, anything else verbatim. */
+export function formatBodyForCopy(body: CapturedBody): string {
+  const text = body.text ?? '';
+  if (body.kind !== 'json' && body.kind !== 'text') return text;
+  const parsed = tryParseJson(text);
+  return parsed.ok && typeof parsed.value === 'object' && parsed.value !== null
+    ? JSON.stringify(parsed.value, null, 2)
+    : text;
+}
+
 export function BodyView({ body, label }: { body: CapturedBody | undefined; label: string }) {
   if (!body || body.kind === 'none') return <p className="muted">No {label.toLowerCase()} body.</p>;
   return (
@@ -121,7 +131,7 @@ export function BodyView({ body, label }: { body: CapturedBody | undefined; labe
         {body.contentType && <span className="muted">{body.contentType}</span>}
         <span className="muted">{formatBytes(body.size)}</span>
         {body.text !== undefined && (
-          <CopyButton label={`Copy ${label.toLowerCase()}`} text={() => body.text ?? ''} />
+          <CopyButton label={`Copy ${label.toLowerCase()}`} text={() => formatBodyForCopy(body)} />
         )}
       </div>
       {body.truncated && (

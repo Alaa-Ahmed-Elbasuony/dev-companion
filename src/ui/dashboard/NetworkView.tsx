@@ -1,6 +1,7 @@
 // Request explorer: dense, sortable, filterable list (virtualized) with a
 // details panel beside it, so the list keeps its scroll position.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { filterEntries, isFailure, statusClass } from '../../analysis/filter';
 import type { RequestFilter, StatusFilter } from '../../analysis/filter';
 import type { CaptureSource, NetworkEntry } from '../../shared/types';
@@ -17,6 +18,28 @@ import { RequestDetails } from './RequestDetails';
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const SOURCES: CaptureSource[] = ['fetch', 'xhr', 'beacon', 'replay', 'import', 'cdp'];
 const ROW_HEIGHT = 30;
+// Details panel width is a per-viewer convenience; storage may be unavailable.
+const DETAILS_WIDTH_KEY = 'dc.network.detailsWidth';
+const DETAILS_MIN = 320;
+const LIST_MIN = 360;
+
+function loadDetailsWidth(): number | undefined {
+  try {
+    const v = Number(localStorage.getItem(DETAILS_WIDTH_KEY));
+    return Number.isFinite(v) && v >= DETAILS_MIN ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveDetailsWidth(width: number | undefined) {
+  try {
+    if (width === undefined) localStorage.removeItem(DETAILS_WIDTH_KEY);
+    else localStorage.setItem(DETAILS_WIDTH_KEY, String(Math.round(width)));
+  } catch {
+    // ignore
+  }
+}
 type Sort = 'newest' | 'oldest' | 'slowest' | 'status' | 'method';
 const RANGES: { id: string; label: string; ms?: number }[] = [
   { id: '', label: 'All time' },
@@ -109,6 +132,44 @@ export function NetworkView(props: ViewProps) {
   const [notice, setNotice] = useState<{ kind: 'info' | 'error' | 'warning'; text: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const [detailsWidth, setDetailsWidth] = useState<number | undefined>(loadDetailsWidth);
+
+  const clampWidth = (w: number) => {
+    const total = layoutRef.current?.clientWidth ?? window.innerWidth;
+    return Math.max(DETAILS_MIN, Math.min(w, total - LIST_MIN));
+  };
+
+  const startResize = (ev: ReactPointerEvent<HTMLDivElement>) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    const handle = ev.currentTarget;
+    handle.setPointerCapture(ev.pointerId);
+    const right = layoutRef.current?.getBoundingClientRect().right ?? window.innerWidth;
+    let latest = detailsWidth;
+    const onMove = (e: PointerEvent) => {
+      latest = clampWidth(right - e.clientX);
+      setDetailsWidth(latest);
+    };
+    const onUp = () => {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      document.body.classList.remove('is-resizing');
+      saveDetailsWidth(latest);
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+    document.body.classList.add('is-resizing');
+  };
+
+  const resizeBy = (delta: number) => {
+    const current = document.querySelector('.details')?.getBoundingClientRect().width ?? DETAILS_MIN;
+    const next = clampWidth(current + delta);
+    setDetailsWidth(next);
+    saveDetailsWidth(next);
+  };
 
   const update = (patch: Partial<NetworkFilter>, extra: Record<string, string> = {}) => {
     const { preset: _preset, ...rest } = params;
@@ -307,7 +368,11 @@ export function NetworkView(props: ViewProps) {
   ];
 
   return (
-    <div className="requests-layout">
+    <div
+      ref={layoutRef}
+      className="requests-layout"
+      style={detailsWidth ? ({ '--details-w': `${detailsWidth}px` } as CSSProperties) : undefined}
+    >
       <div className="requests-pane">
         <div className="filters" role="search">
           <input
@@ -483,118 +548,141 @@ export function NetworkView(props: ViewProps) {
 
         {notice && <Notice kind={notice.kind}>{notice.text}</Notice>}
 
-        <div className="list-header" role="row">
-          <span className="col-check">
-            <input
-              type="checkbox"
-              aria-label="Select all shown"
-              checked={visible.length > 0 && checkedVisible.length === visible.length}
-              onChange={(e) => setChecked(e.target.checked ? new Set(visible.map((v) => v.id)) : new Set())}
-            />
-          </span>
-          <span className="col-method">Method</span>
-          <span className="col-status">Status</span>
-          <span className="col-url">Endpoint</span>
-          <span className="col-type">Type</span>
-          <span className="col-dur">Time</span>
-          <span className="col-start">Started</span>
-        </div>
-        {visible.length === 0 ? (
-          entries.length === 0 ? (
-            <EmptyState title="No requests captured in this view yet.">
-              Start recording from the toolbar popup, then reproduce the issue. Reload the page to capture
-              requests made during page load.
-            </EmptyState>
+        <div className="list-scroll">
+          <div className="list-header" role="row">
+            <span className="col-check">
+              <input
+                type="checkbox"
+                aria-label="Select all shown"
+                checked={visible.length > 0 && checkedVisible.length === visible.length}
+                onChange={(e) => setChecked(e.target.checked ? new Set(visible.map((v) => v.id)) : new Set())}
+              />
+            </span>
+            <span className="col-method">Method</span>
+            <span className="col-status">Status</span>
+            <span className="col-url">Endpoint</span>
+            <span className="col-type">Type</span>
+            <span className="col-dur">Time</span>
+            <span className="col-start">Started</span>
+          </div>
+          {visible.length === 0 ? (
+            entries.length === 0 ? (
+              <EmptyState title="No requests captured in this view yet.">
+                Start recording from the toolbar popup, then reproduce the issue. Reload the page to capture
+                requests made during page load.
+              </EmptyState>
+            ) : (
+              <EmptyState
+                title="No requests match the current filters."
+                action={
+                  <button type="button" className="btn btn-small" onClick={clearAll}>
+                    Clear all filters
+                  </button>
+                }
+              />
+            )
           ) : (
-            <EmptyState
-              title="No requests match the current filters."
-              action={
-                <button type="button" className="btn btn-small" onClick={clearAll}>
-                  Clear all filters
-                </button>
-              }
-            />
-          )
-        ) : (
-          <VirtualList
-            items={visible}
-            rowHeight={ROW_HEIGHT}
-            className="request-list"
-            renderRow={(e) => {
-              const u = safeUrl(e.url);
-              const mutation = MUTATING_METHODS.has(e.method);
-              const cls = statusClass(e);
-              return (
-                <div
-                  key={e.id}
-                  role="row"
-                  aria-selected={e.id === selectedId}
-                  className={`row ${e.id === selectedId ? 'row-selected' : ''} ${cls === 'failed' || cls === 'server-error' ? 'row-error' : cls === 'client-error' ? 'row-warn-status' : ''}`}
-                  style={{ height: ROW_HEIGHT }}
-                  onClick={() => select(e.id)}
-                >
-                  <span className="col-check" onClick={(ev) => ev.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      aria-label="Select request"
-                      checked={checked.has(e.id)}
-                      onChange={(ev) =>
-                        setChecked((c) => {
-                          const next = new Set(c);
-                          if (ev.target.checked) next.add(e.id);
-                          else next.delete(e.id);
-                          return next;
-                        })
-                      }
-                    />
-                  </span>
-                  <span className="col-method">
-                    <MethodTag method={e.method} />
-                    {mutation && (
-                      <span
-                        className="mutation-dot"
-                        title="Mutation: changes server data"
-                        aria-label="mutation"
-                      >
-                        ●
-                      </span>
-                    )}
-                  </span>
-                  <span className="col-status">
-                    <StatusPill entry={e} />
-                  </span>
-                  <span className="col-url" title={e.url}>
-                    {u ? (
-                      <>
-                        <span className="url-path">
-                          {u.pathname}
-                          {u.search}
-                        </span>{' '}
-                        <span className="muted">{u.host}</span>
-                      </>
-                    ) : (
-                      e.url
-                    )}
-                    {e.warnings.length > 0 && (
-                      <span className="warn-icon" title={e.warnings.join('\n')} aria-label="has warnings">
-                        ⚠
-                      </span>
-                    )}
-                  </span>
-                  <span className="col-type muted">{e.source}</span>
-                  <span
-                    className={`col-dur ${(e.duration ?? 0) >= settings.slowRequestMs ? 'text-warn' : ''}`}
+            <VirtualList
+              items={visible}
+              rowHeight={ROW_HEIGHT}
+              className="request-list"
+              renderRow={(e) => {
+                const u = safeUrl(e.url);
+                const mutation = MUTATING_METHODS.has(e.method);
+                const cls = statusClass(e);
+                return (
+                  <div
+                    key={e.id}
+                    role="row"
+                    aria-selected={e.id === selectedId}
+                    className={`row ${e.id === selectedId ? 'row-selected' : ''} ${cls === 'failed' || cls === 'server-error' ? 'row-error' : cls === 'client-error' ? 'row-warn-status' : ''}`}
+                    style={{ height: ROW_HEIGHT }}
+                    onClick={() => select(e.id)}
                   >
-                    {formatDuration(e.duration)}
-                  </span>
-                  <span className="col-start muted">{new Date(e.startedAt).toLocaleTimeString()}</span>
-                </div>
-              );
-            }}
-          />
-        )}
+                    <span className="col-check" onClick={(ev) => ev.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        aria-label="Select request"
+                        checked={checked.has(e.id)}
+                        onChange={(ev) =>
+                          setChecked((c) => {
+                            const next = new Set(c);
+                            if (ev.target.checked) next.add(e.id);
+                            else next.delete(e.id);
+                            return next;
+                          })
+                        }
+                      />
+                    </span>
+                    <span className="col-method">
+                      <MethodTag method={e.method} />
+                      {mutation && (
+                        <span
+                          className="mutation-dot"
+                          title="Mutation: changes server data"
+                          aria-label="mutation"
+                        >
+                          ●
+                        </span>
+                      )}
+                    </span>
+                    <span className="col-status">
+                      <StatusPill entry={e} />
+                    </span>
+                    <span className="col-url" title={e.url}>
+                      {u ? (
+                        <>
+                          <span className="url-path">
+                            {u.pathname}
+                            {u.search}
+                          </span>{' '}
+                          <span className="muted">{u.host}</span>
+                        </>
+                      ) : (
+                        e.url
+                      )}
+                      {e.warnings.length > 0 && (
+                        <span className="warn-icon" title={e.warnings.join('\n')} aria-label="has warnings">
+                          ⚠
+                        </span>
+                      )}
+                    </span>
+                    <span className="col-type muted">{e.source}</span>
+                    <span
+                      className={`col-dur ${(e.duration ?? 0) >= settings.slowRequestMs ? 'text-warn' : ''}`}
+                    >
+                      {formatDuration(e.duration)}
+                    </span>
+                    <span className="col-start muted">{new Date(e.startedAt).toLocaleTimeString()}</span>
+                  </div>
+                );
+              }}
+            />
+          )}
+        </div>
       </div>
 
+      {selected && (
+        <div
+          className="splitter"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize details panel (double-click to reset)"
+          title="Drag to resize · double-click to reset"
+          tabIndex={0}
+          onPointerDown={startResize}
+          onDoubleClick={() => {
+            setDetailsWidth(undefined);
+            saveDetailsWidth(undefined);
+          }}
+          onKeyDown={(ev) => {
+            if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
+              ev.preventDefault();
+              resizeBy((ev.key === 'ArrowLeft' ? 1 : -1) * (ev.shiftKey ? 80 : 20));
+            }
+          }}
+        />
+      )}
       {selected && (
         <RequestDetails
           entry={selected}

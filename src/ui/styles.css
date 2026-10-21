@@ -660,6 +660,23 @@ body.popup {
   min-height: 0;
   overflow-y: auto;
 }
+/* Header + rows scroll sideways together once the list gets narrower than
+   its columns can usefully fit (e.g. with a wide details panel). */
+.list-scroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.list-scroll > .list-header,
+.list-scroll > .vlist {
+  min-width: 640px;
+}
+.list-scroll > .vlist {
+  overflow-x: hidden;
+}
 .row {
   border-bottom: 1px solid var(--bg-3);
   cursor: pointer;
@@ -692,8 +709,29 @@ body.popup {
   text-align: center;
 }
 
+.splitter {
+  flex: 0 0 6px;
+  margin: 0 -3px;
+  position: relative;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+}
+.splitter:hover,
+.splitter:focus-visible,
+.is-resizing .splitter {
+  background: var(--accent);
+  outline: none;
+}
+.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
 .details {
-  width: min(560px, 48%);
+  width: var(--details-w, min(560px, 48%));
+  flex-shrink: 0;
+  max-width: calc(100% - 360px);
+  min-width: 320px;
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -1075,8 +1113,13 @@ body.popup {
   .requests-layout {
     flex-direction: column;
   }
+  .splitter {
+    display: none;
+  }
   .details {
     width: 100%;
+    max-width: none;
+    min-width: 0;
     border-left: none;
     border-top: 1px solid var(--border);
     max-height: 55%;
