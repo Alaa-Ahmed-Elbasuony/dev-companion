@@ -7,6 +7,8 @@ import { loadSettings } from './extension';
 export interface BuildInfo {
   commit: string | null;
   branch: string | null;
+  /** Built with uncommitted changes under src/ or scripts/ (a development build). */
+  dirty?: boolean;
   /** "owner/name" on GitHub. */
   repo: string | null;
   builtAt: number;
@@ -84,12 +86,12 @@ export function compareToStatus(commit: string, body: CompareResponse, now = Dat
 
 /**
  * Returns the cached status, or asks GitHub when it is older than six hours
- * (or `force` is set). Returns null when checks are off or this build has no
- * commit (not built from a git checkout).
+ * (or `force` is set). Returns null when checks are off, or when this build
+ * has no commit (not built from a git checkout) or uncommitted source changes.
  */
 export async function checkForUpdate(force = false): Promise<UpdateStatus | null> {
   const [settings, build] = await Promise.all([loadSettings(), loadBuildInfo()]);
-  if ((!settings.checkForUpdates && !force) || !build?.commit || !build.repo) return null;
+  if ((!settings.checkForUpdates && !force) || !build?.commit || !build.repo || build.dirty) return null;
   const cached = (await chrome.storage.local.get(STATUS_KEY))[STATUS_KEY] as UpdateStatus | undefined;
   const fresh = cached?.commit === build.commit && Date.now() - cached.checkedAt < CHECK_EVERY_MS;
   if (cached && fresh && !force) return cached;

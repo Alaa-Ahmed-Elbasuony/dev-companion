@@ -30,7 +30,9 @@ const git = (...gitArgs) => {
 /**
  * Records which commit this build came from, so the extension can tell users
  * when the repository has newer changes. Builds outside a git checkout (and E2E
- * builds, which must not call GitHub) get no commit and never check.
+ * builds, which must not call GitHub) get no commit and never check. A build
+ * with uncommitted extension sources is a local development build: its commit
+ * does not describe what it contains, so it does not check either.
  */
 function buildInfo() {
   const remote = e2e ? null : git('remote', 'get-url', 'origin');
@@ -38,6 +40,8 @@ function buildInfo() {
   return {
     commit: e2e ? null : git('rev-parse', 'HEAD'),
     branch: e2e ? null : git('rev-parse', '--abbrev-ref', 'HEAD'),
+    // Only sources count: `npm install` may touch package-lock.json on users' machines.
+    dirty: !!git('status', '--porcelain', '--', 'src', 'scripts'),
     repo,
     builtAt: Date.now(),
   };
