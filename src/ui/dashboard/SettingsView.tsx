@@ -399,6 +399,11 @@ export function SettingsView({
           <p className="muted small">
             This build was not made from a git checkout, so it cannot check for updates.
           </p>
+        ) : build.dirty ? (
+          <p className="muted small">
+            This is a development build: it was made from <code>{build.commit.slice(0, 7)}</code> with
+            uncommitted changes, so it does not check for updates. Commit and rebuild to turn checks on.
+          </p>
         ) : (
           <>
             <p className="muted small">

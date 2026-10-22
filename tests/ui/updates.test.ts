@@ -117,6 +117,12 @@ describe('update check', () => {
     expect(status).toMatchObject({ available: true, error: expect.stringContaining('rate limit') });
   });
 
+  it('does not check development builds with uncommitted source changes', async () => {
+    await setup({ ...BUILD, dirty: true });
+    expect(await updates.checkForUpdate(true)).toBeNull();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('api.github.com'))).toBe(false);
+  });
+
   it('does nothing when turned off or without a git commit', async () => {
     await setup(BUILD, { checkForUpdates: false });
     expect(await updates.checkForUpdate()).toBeNull();
