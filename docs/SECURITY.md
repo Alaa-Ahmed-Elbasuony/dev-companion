@@ -84,7 +84,7 @@ Default rules (editable in Settings → Redaction):
 
 Dev Companion sends no analytics or telemetry. It makes two kinds of outbound requests:
 
-- **Update check** (on by default, Settings → Updates): at most every six hours, an unauthenticated `GET https://api.github.com/repos/<repo>/compare/<build commit>...<branch>` to the GitHub repository the build was cloned from. It sends only that commit hash and receives commit messages and changed file names. Builds made outside a git checkout never check.
+- **Update check** (on by default, Settings → Updates): at most once an hour, an unauthenticated `GET https://api.github.com/repos/<repo>/compare/<build commit>...<branch>` (retried against `main` if the branch no longer exists) to the GitHub repository the build was cloned from. It sends only that commit hash and receives commit messages and changed file names. Builds made outside a git checkout never check.
 - **Replays** you explicitly confirm:
 
 - Replay is never automatic. It needs an edit step, a review screen naming the **target origin**, and a final click.
