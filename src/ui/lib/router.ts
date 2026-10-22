@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useState } from 'react';
 
 export type View =
-  'overview' | 'network' | 'realtime' | 'timeline' | 'tracing' | 'console' | 'investigations' | 'settings';
+  | 'overview'
+  | 'network'
+  | 'realtime'
+  | 'timeline'
+  | 'tracing'
+  | 'console'
+  | 'storage'
+  | 'investigations'
+  | 'settings';
 
 export const VIEWS: { id: View; label: string; key: string }[] = [
   { id: 'overview', label: 'Overview', key: '1' },
@@ -12,8 +20,9 @@ export const VIEWS: { id: View; label: string; key: string }[] = [
   { id: 'timeline', label: 'Timeline', key: '4' },
   { id: 'tracing', label: 'Tracing', key: '5' },
   { id: 'console', label: 'Console', key: '6' },
-  { id: 'investigations', label: 'Investigations', key: '7' },
-  { id: 'settings', label: 'Settings', key: '8' },
+  { id: 'storage', label: 'Storage', key: '7' },
+  { id: 'investigations', label: 'Investigations', key: '8' },
+  { id: 'settings', label: 'Settings', key: '9' },
 ];
 
 export interface Route {

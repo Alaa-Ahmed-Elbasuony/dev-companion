@@ -111,7 +111,7 @@ async function maybeScheduleTraceSync(origin: string) {
   }
 }
 
-// chrome.debugger exists only after the optional "debugger" permission is granted.
+// Registered at startup so debugger events wake the worker.
 let debuggerListeners = false;
 function registerDebuggerListeners() {
   if (debuggerListeners || typeof chrome.debugger?.onEvent?.addListener !== 'function') return;
@@ -242,7 +242,6 @@ chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendRespon
 
 // If the popup closes while Chrome shows the permission prompt, finish the start here.
 chrome.permissions.onAdded.addListener((permissions) => {
-  if (permissions.permissions?.includes('debugger')) registerDebuggerListeners();
   void (async () => {
     const data = await chrome.storage.session.get(PENDING_START_KEY);
     const pending = data[PENDING_START_KEY] as { tabId: number; url: string; at: number } | undefined;

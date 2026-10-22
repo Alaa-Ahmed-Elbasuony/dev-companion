@@ -12,6 +12,8 @@ import { useDataVersion, useSettings } from '../lib/hooks';
 import { VIEWS, useRoute } from '../lib/router';
 import type { View } from '../lib/router';
 import { useSessionData, useSessionMessages } from '../lib/session-data';
+import { ALL_SITE_DATA_KINDS, SITE_DATA_KINDS, clearSiteData } from '../lib/site-data';
+import type { SiteDataKind } from '../lib/site-data';
 import { SHORTCUT_HELP, useShortcuts } from '../lib/shortcuts';
 import { useTheme } from '../lib/theme';
 import { ConsoleView } from './ConsoleView';
@@ -22,11 +24,25 @@ import { OverviewView } from './OverviewView';
 import { RealtimeView } from './RealtimeView';
 import { ReplayDialog } from './ReplayDialog';
 import { SettingsView } from './SettingsView';
+import { StorageView } from './StorageView';
 import { TimelineView } from './TimelineView';
 import { TracingView } from './TracingView';
 
 const params = new URLSearchParams(location.search);
 const embeddedTabId = params.has('tabId') ? Number(params.get('tabId')) : undefined;
+
+const CLEAR_KINDS_KEY = 'devcompanion:clearKinds';
+
+/** The header's "clear selected" choice, remembered per browser. */
+function loadClearKinds(): SiteDataKind[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CLEAR_KINDS_KEY) ?? 'null') as unknown;
+    if (Array.isArray(saved)) return ALL_SITE_DATA_KINDS.filter((k) => saved.includes(k));
+  } catch {
+    // Storage unavailable or corrupt: fall back to the default.
+  }
+  return ['cookies', 'localStorage', 'sessionStorage'];
+}
 
 function useNow(active: boolean) {
   const [now, setNow] = useState(Date.now());
@@ -62,8 +78,13 @@ export function App() {
     text: string;
   } | null>(null);
   const [panelTabUrl, setPanelTabUrl] = useState<string | undefined>();
+  const [clearKinds, setClearKinds] = useState<SiteDataKind[]>(loadClearKinds);
+  const [siteDataVersion, setSiteDataVersion] = useState(0);
   const rec = data.recording;
   const now = useNow(!!rec);
+  // The live tab whose site data the header acts on.
+  const targetTabId =
+    embeddedTabId ?? rec?.tabId ?? (data.session && !data.session.endedAt ? data.session.tabId : undefined);
 
   useEffect(() => {
     if (data.sessionId && data.sessionId !== sessionId) setSessionId(data.sessionId);
@@ -83,14 +104,66 @@ export function App() {
     [data.entries, navigate],
   );
 
-  // The inspected tab URL must be known before the click: permission prompts need a user gesture.
+  // The target tab URL must be known before the click: permission prompts need a user gesture.
   useEffect(() => {
-    if (embeddedTabId === undefined || typeof chrome.tabs?.get !== 'function') return;
-    chrome.tabs.get(embeddedTabId).then(
+    if (targetTabId === undefined || typeof chrome.tabs?.get !== 'function') {
+      setPanelTabUrl(undefined);
+      return;
+    }
+    chrome.tabs.get(targetTabId).then(
       (t) => setPanelTabUrl(t.url),
       () => setPanelTabUrl(undefined),
     );
-  }, [version, reloadKey]);
+  }, [targetTabId, version, reloadKey]);
+
+  // Name the browser tab after the site so several dashboards are easy to tell apart.
+  const siteHost = useMemo(() => {
+    for (const u of [panelTabUrl, data.session?.origin]) {
+      try {
+        if (u && /^https?:/.test(u)) return new URL(u).host;
+      } catch {
+        // Try the next source.
+      }
+    }
+    return '';
+  }, [panelTabUrl, data.session?.origin]);
+  const recordingLive = !!rec && !rec.paused;
+  useEffect(() => {
+    document.title = siteHost ? `${recordingLive ? '● ' : ''}${siteHost} · Dev Companion` : 'Dev Companion';
+  }, [siteHost, recordingLive]);
+
+  const siteDataBlocked =
+    targetTabId === undefined
+      ? 'No live tab: open the dashboard from a recorded tab or the DevTools panel'
+      : !panelTabUrl || !/^https?:/.test(panelTabUrl)
+        ? 'Site data is only available on http(s) pages'
+        : !canRequestPermissions()
+          ? 'Permissions cannot be requested from this page'
+          : null;
+  const clearData = (kinds: SiteDataKind[]) => {
+    if (targetTabId === undefined || !panelTabUrl || !kinds.length) return;
+    clearSiteData(targetTabId, panelTabUrl, kinds)
+      .then((result) => setPanelMessage({ kind: result.ok ? 'info' : 'warning', text: result.message }))
+      .catch((err: unknown) =>
+        setPanelMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) }),
+      )
+      .finally(() => setSiteDataVersion((v) => v + 1));
+  };
+  const chooseClearKinds = (kinds: SiteDataKind[]) => {
+    setClearKinds(kinds);
+    try {
+      localStorage.setItem(CLEAR_KINDS_KEY, JSON.stringify(kinds));
+    } catch {
+      // Not remembered; the choice still applies to this page.
+    }
+  };
+  const toggleClearKind = (kind: SiteDataKind) =>
+    chooseClearKinds(
+      clearKinds.includes(kind)
+        ? clearKinds.filter((k) => k !== kind)
+        : ALL_SITE_DATA_KINDS.filter((k) => k === kind || clearKinds.includes(k)),
+    );
+  const allClearKinds = clearKinds.length === ALL_SITE_DATA_KINDS.length;
 
   const startFromPanel = () => {
     if (embeddedTabId === undefined) return;
@@ -135,19 +208,7 @@ export function App() {
   const toggleAdvanced = () => {
     if (!rec) return;
     const enable = !rec.advanced;
-    // Request the optional permission synchronously from the click.
-    const ask =
-      enable && canRequestPermissions()
-        ? chrome.permissions.request({ permissions: ['debugger'] })
-        : Promise.resolve(true);
-    void ask.then(async (granted) => {
-      if (!granted) {
-        setPanelMessage({
-          kind: 'warning',
-          text: 'The “debugger” permission was not granted; advanced capture stays off.',
-        });
-        return;
-      }
+    void (async () => {
       const result = await sendToWorker<AdvancedCaptureResult>({
         type: 'set-advanced-capture',
         tabId: rec.tabId,
@@ -162,7 +223,12 @@ export function App() {
             : 'Advanced capture turned off.',
         });
       reload();
-    });
+    })().catch((err: unknown) =>
+      setPanelMessage({
+        kind: 'error',
+        text: `Advanced capture failed: ${String(err instanceof Error ? err.message : err)}`,
+      }),
+    );
   };
 
   const viewProps: ViewProps | null = settings
@@ -230,10 +296,22 @@ export function App() {
         label: `Theme: switch to ${theme === 'dark' ? 'light' : 'dark'}`,
         run: () => setTheme(theme === 'dark' ? 'light' : 'dark'),
       },
+      ...SITE_DATA_KINDS.map((k) => ({
+        id: `clear-${k.kind}`,
+        label: `Clear ${k.label.toLowerCase()} for this site`,
+        run: () => clearData([k.kind]),
+        disabled: !!siteDataBlocked,
+      })),
+      {
+        id: 'clear-selected',
+        label: 'Clear selected site data',
+        run: () => clearData(clearKinds),
+        disabled: !!siteDataBlocked || !clearKinds.length,
+      },
       { id: 'help', label: 'Keyboard shortcuts', hint: '?', run: () => setHelp(true) },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rec, theme, navigate],
+    [rec, theme, navigate, targetTabId, panelTabUrl, siteDataBlocked, clearKinds],
   );
 
   useShortcuts([
@@ -364,6 +442,56 @@ export function App() {
             ?
           </button>
         </div>
+        <div className="site-data-bar" role="group" aria-label="Clear site data">
+          <button
+            type="button"
+            className="link small"
+            onClick={() => navigate('storage')}
+            title="See this site's cookies and storage"
+          >
+            {siteHost || 'Site data'}
+          </button>
+          <span className="muted small">Clear:</span>
+          <div className="chip-group" role="group" aria-label="Data to clear">
+            {SITE_DATA_KINDS.map((k) => (
+              <button
+                key={k.kind}
+                type="button"
+                className={`chip ${clearKinds.includes(k.kind) ? 'chip-on' : ''}`}
+                aria-pressed={clearKinds.includes(k.kind)}
+                disabled={!!siteDataBlocked}
+                onClick={() => toggleClearKind(k.kind)}
+                title={siteDataBlocked ?? `Include ${k.label.toLowerCase()}`}
+              >
+                {embeddedTabId !== undefined ? k.short : k.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className={`chip ${allClearKinds ? 'chip-on' : ''}`}
+              aria-pressed={allClearKinds}
+              disabled={!!siteDataBlocked}
+              onClick={() => chooseClearKinds(allClearKinds ? [] : ALL_SITE_DATA_KINDS)}
+              title={siteDataBlocked ?? (allClearKinds ? 'Deselect all' : 'Select all')}
+            >
+              All
+            </button>
+          </div>
+          <button
+            type="button"
+            className="btn btn-small btn-danger"
+            disabled={!!siteDataBlocked || !clearKinds.length}
+            onClick={() => clearData(clearKinds)}
+            title={
+              siteDataBlocked ??
+              (clearKinds.length
+                ? `Clear ${clearKinds.length} selected type${clearKinds.length === 1 ? '' : 's'} for this site`
+                : 'Select what to clear first')
+            }
+          >
+            Clear selected{clearKinds.length ? ` (${clearKinds.length})` : ''}
+          </button>
+        </div>
       </header>
 
       {data.error && (
@@ -406,6 +534,17 @@ export function App() {
           <TracingView {...viewProps} />
         ) : route.view === 'console' ? (
           <ConsoleView {...viewProps} />
+        ) : route.view === 'storage' ? (
+          <StorageView
+            {...viewProps}
+            site={{
+              tabId: targetTabId,
+              url: panelTabUrl,
+              host: siteHost,
+              blocked: siteDataBlocked,
+              version: siteDataVersion,
+            }}
+          />
         ) : route.view === 'investigations' ? (
           <InvestigationsView
             {...viewProps}

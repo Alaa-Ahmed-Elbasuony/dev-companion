@@ -1,8 +1,8 @@
 // Optional "advanced capture" through the Chrome DevTools Protocol
-// (chrome.debugger). Off by default; enabled per recording tab only after the
-// user grants the optional "debugger" permission. Chrome shows its own
-// "started debugging this browser" banner while attached, and attaching fails
-// when another debugger (e.g. an open DevTools on some versions) conflicts.
+// (chrome.debugger). Off by default; enabled per recording tab by the user.
+// Chrome shows its own "started debugging this browser" banner while attached,
+// and attaching fails when another debugger (e.g. an open DevTools on some
+// versions) conflicts.
 //
 // It is a second producer of the same drafts as the main-world recorder and
 // feeds the same Ingestor, which merges duplicate observations. It adds
@@ -133,7 +133,7 @@ export class AdvancedCapture {
       return {
         ok: false,
         reason: 'permission-required',
-        message: 'Advanced capture needs the optional "debugger" permission.',
+        message: 'Advanced capture needs the "debugger" permission. Reload the extension to apply it.',
       };
     }
     try {

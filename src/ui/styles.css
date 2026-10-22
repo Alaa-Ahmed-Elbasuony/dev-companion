@@ -1281,6 +1281,95 @@ kbd {
   color: #1d2129;
 }
 
+/* Clear site data (its own wrapped row in the header) */
+.site-data-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  flex-basis: 100%;
+  min-width: 0;
+}
+.site-data-bar .chip-group {
+  flex-wrap: wrap;
+}
+.chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Storage view */
+.storage-view {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.storage-view > .notice {
+  margin: 6px 12px;
+}
+.storage-clear {
+  margin-left: auto;
+}
+.storage-body {
+  flex: 1;
+  overflow: auto;
+}
+.storage-table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: auto;
+}
+.storage-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-2);
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  z-index: 1;
+}
+.storage-table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--bg-3);
+  vertical-align: top;
+  white-space: nowrap;
+}
+.storage-table td.mono {
+  font-size: 12px;
+}
+.storage-table .storage-value {
+  white-space: normal;
+  word-break: break-all;
+  max-width: 50vw;
+  max-height: 3.6em;
+  overflow: hidden;
+}
+.storage-row {
+  cursor: pointer;
+}
+.storage-row:hover,
+.storage-row[aria-expanded='true'] {
+  background: var(--bg-2);
+}
+.storage-row .copy-icon {
+  opacity: 0;
+}
+.storage-row:hover .copy-icon,
+.storage-row .copy-icon:focus-visible,
+.storage-row .copy-icon.copy-copied {
+  opacity: 1;
+}
+.storage-details > td {
+  white-space: normal;
+  background: var(--bg-2);
+  padding: 6px 8px 10px;
+}
+
 /* Badges (symbol + text, never color alone) */
 .badge {
   display: inline-flex;
