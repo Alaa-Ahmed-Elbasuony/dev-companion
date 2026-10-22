@@ -184,6 +184,17 @@ async function handle(message: WorkerRequest, sender: chrome.runtime.MessageSend
       await serial(() => controller.stop(message.tabId));
       return { ok: true };
     }
+    case 'end-session': {
+      const tabId = await controller.tabForSession(message.sessionId);
+      if (tabId === undefined) {
+        await serial(() => controller.closeSession(message.sessionId));
+        return { ok: true };
+      }
+      const rec = await controller.get(tabId);
+      if (rec?.advanced) await (await getAdvancedCapture()).disable(tabId, 'Session closed');
+      await serial(() => controller.stop(tabId, 'Session closed'));
+      return { ok: true };
+    }
     case 'sync-server-traces':
       return { ok: true, status: await (await getTraceSync()).syncAll() };
     case 'set-advanced-capture': {

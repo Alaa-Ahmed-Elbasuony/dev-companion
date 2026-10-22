@@ -33,6 +33,7 @@ export type WorkerRequest =
   | { type: 'page-config-request' }
   | { type: 'start-recording'; tabId: number; url: string }
   | { type: 'stop-recording'; tabId: number }
+  | { type: 'end-session'; sessionId: string }
   | { type: 'pause-recording'; tabId: number }
   | { type: 'resume-recording'; tabId: number }
   | { type: 'get-tab-state'; tabId: number }
