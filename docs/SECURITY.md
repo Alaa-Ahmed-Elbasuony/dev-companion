@@ -82,7 +82,10 @@ Default rules (editable in Settings → Redaction):
 
 ## Network activity and replay safeguards
 
-Dev Companion sends **no** network requests on its own: no analytics, telemetry or remote services. The only outbound requests it makes are replays you explicitly confirm:
+Dev Companion sends no analytics or telemetry. It makes two kinds of outbound requests:
+
+- **Update check** (on by default, Settings → Updates): at most every six hours, an unauthenticated `GET https://api.github.com/repos/<repo>/compare/<build commit>...<branch>` to the GitHub repository the build was cloned from. It sends only that commit hash and receives commit messages and changed file names. Builds made outside a git checkout never check.
+- **Replays** you explicitly confirm:
 
 - Replay is never automatic. It needs an edit step, a review screen naming the **target origin**, and a final click.
 - Captured credential values were removed at capture. Headers whose value contains a `[REDACTED]` placeholder are never sent. Placeholders left in the URL or body cannot be dropped automatically; the review screen warns that they would be sent literally, so replace them first.

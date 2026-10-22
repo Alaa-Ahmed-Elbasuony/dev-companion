@@ -5,6 +5,7 @@ import type { InvestigationAnchor, NetworkEntry } from '../../shared/types';
 import { formatBytes, formatDuration } from '../../shared/util';
 import { Notice, Tabs } from '../components/common';
 import { CommandPalette, ShortcutHelp } from '../components/ui';
+import { UpdateBanner } from '../components/UpdateBanner';
 import type { Command } from '../components/ui';
 import { useAnalysis } from '../lib/analysis';
 import { canRequestPermissions, requestPermissionAndStart, sendToWorker } from '../lib/extension';
@@ -16,6 +17,7 @@ import { ALL_SITE_DATA_KINDS, SITE_DATA_KINDS, clearSiteData } from '../lib/site
 import type { SiteDataKind } from '../lib/site-data';
 import { SHORTCUT_HELP, useShortcuts } from '../lib/shortcuts';
 import { useTheme } from '../lib/theme';
+import { useUpdateStatus } from '../lib/updates';
 import { ConsoleView } from './ConsoleView';
 import type { ViewProps } from './context';
 import { InvestigationsView } from './InvestigationsView';
@@ -80,6 +82,7 @@ export function App() {
   const [panelTabUrl, setPanelTabUrl] = useState<string | undefined>();
   const [clearKinds, setClearKinds] = useState<SiteDataKind[]>(loadClearKinds);
   const [siteDataVersion, setSiteDataVersion] = useState(0);
+  const update = useUpdateStatus();
   const rec = data.recording;
   const now = useNow(!!rec);
   // The live tab whose site data the header acts on.
@@ -308,6 +311,11 @@ export function App() {
         run: () => clearData(clearKinds),
         disabled: !!siteDataBlocked || !clearKinds.length,
       },
+      {
+        id: 'updates',
+        label: 'Check for extension updates',
+        run: () => navigate('settings', { section: 'updates' }),
+      },
       { id: 'help', label: 'Keyboard shortcuts', hint: '?', run: () => setHelp(true) },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -502,6 +510,9 @@ export function App() {
       )}
       {data.storageStatus && <Notice kind="warning">Storage: {data.storageStatus.message}</Notice>}
       {panelMessage && <Notice kind={panelMessage.kind}>{panelMessage.text}</Notice>}
+      {update.show && update.status && route.view !== 'settings' && (
+        <UpdateBanner status={update.status} onDismiss={update.dismiss} />
+      )}
 
       <nav aria-label="Views">
         <Tabs<View>

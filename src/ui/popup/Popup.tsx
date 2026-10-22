@@ -5,7 +5,9 @@ import type { AdvancedCaptureResult } from '../../shared/messages';
 import type { RecordingState } from '../../shared/types';
 import { Notice } from '../components/common';
 import { getStore, getTabState, requestPermissionAndStart, sendToWorker } from '../lib/extension';
+import { UpdateBanner } from '../components/UpdateBanner';
 import { useDataVersion } from '../lib/hooks';
+import { useUpdateStatus } from '../lib/updates';
 
 interface TabInfo {
   id: number;
@@ -21,6 +23,7 @@ export function Popup() {
   const [justStarted, setJustStarted] = useState(false);
   const [marker, setMarker] = useState('');
   const version = useDataVersion();
+  const update = useUpdateStatus();
 
   useEffect(() => {
     void chrome.tabs.query({ active: true, currentWindow: true }).then(([t]) => {
@@ -151,6 +154,14 @@ export function Popup() {
           </span>
         )}
       </header>
+
+      {update.show && update.status && (
+        <UpdateBanner
+          status={update.status}
+          onDismiss={update.dismiss}
+          onDetails={() => openExplorer('#settings?section=updates')}
+        />
+      )}
 
       <section className="popup-section">
         <div className="muted small">Current tab</div>

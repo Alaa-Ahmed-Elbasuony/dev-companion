@@ -61,6 +61,7 @@ export const DEFAULT_SETTINGS: Settings = {
   maxSpans: 20_000,
   retentionDays: 0,
   captureFetchStreams: false,
+  checkForUpdates: true,
   appAdapterOrigins: [],
   notificationSelectors: [
     '[role="alert"]',
@@ -186,6 +187,7 @@ export function normalizeSettings(raw: unknown): Settings {
     maxSpans: clampInt(r.maxSpans, 100, 200_000, d.maxSpans),
     retentionDays: clampInt(r.retentionDays, 0, 365, d.retentionDays),
     captureFetchStreams: bool(r.captureFetchStreams, d.captureFetchStreams),
+    checkForUpdates: bool(r.checkForUpdates, d.checkForUpdates),
     appAdapterOrigins: stringList(r.appAdapterOrigins, d.appAdapterOrigins)
       .map(normalizeOrigin)
       .filter((o): o is string => !!o),
