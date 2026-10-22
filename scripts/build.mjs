@@ -2,6 +2,7 @@
 //   UI pages      -> Vite (React)
 //   service worker -> esbuild, ES module
 //   content scripts -> esbuild, IIFE (content scripts cannot be ES modules)
+import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import * as esbuild from 'esbuild';
@@ -14,6 +15,34 @@ const watch = args.has('--watch');
 const e2e = args.has('--e2e');
 const outDir = resolve(root, e2e ? 'dist-e2e' : 'dist');
 
+const git = (...gitArgs) => {
+  try {
+    return execFileSync('git', gitArgs, {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Records which commit this build came from, so the extension can tell users
+ * when the repository has newer changes. Builds outside a git checkout (and E2E
+ * builds, which must not call GitHub) get no commit and never check.
+ */
+function buildInfo() {
+  const remote = e2e ? null : git('remote', 'get-url', 'origin');
+  const repo = remote?.match(/github\.com[/:]([\w.-]+\/[\w.-]+?)(?:\.git)?$/)?.[1] ?? null;
+  return {
+    commit: e2e ? null : git('rev-parse', 'HEAD'),
+    branch: e2e ? null : git('rev-parse', '--abbrev-ref', 'HEAD'),
+    repo,
+    builtAt: Date.now(),
+  };
+}
+
 async function writeStatic() {
   const manifest = JSON.parse(await readFile(resolve(root, 'src/manifest.json'), 'utf8'));
   if (e2e) {
@@ -23,6 +52,7 @@ async function writeStatic() {
     manifest.host_permissions = ['http://127.0.0.1/*'];
   }
   await writeFile(resolve(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  await writeFile(resolve(outDir, 'build-info.json'), JSON.stringify(buildInfo(), null, 2));
   await mkdir(resolve(outDir, 'icons'), { recursive: true });
   for (const size of [16, 32, 48, 128]) {
     await writeFile(resolve(outDir, `icons/icon-${size}.png`), renderIcon(size));

@@ -4,7 +4,7 @@ A Chrome extension (Manifest V3) for frontend, realtime and full-stack debugging
 
 Typical use: you click **Create Order**, the UI shows an error, and the `POST /api/orders` request is already gone from the DevTools Network panel. With Dev Companion recording, that request, its payload and its response stay inspectable. So does the `order.failed` WebSocket message that followed it and, with the server tracer, the failing upstream call the server made. All of them are linked.
 
-> Captured data stays in your browser. Dev Companion makes no network requests of its own except a replay you explicitly confirm. If you configure server tracing, it also pulls spans from a collector on your own machine (`127.0.0.1` / `localhost` only).
+> Captured data stays in your browser. Dev Companion makes no network requests of its own except a replay you explicitly confirm and an update check against this GitHub repository (it sends only the commit your build came from; turn it off in Settings → Updates). If you configure server tracing, it also pulls spans from a collector on your own machine (`127.0.0.1` / `localhost` only).
 
 ## Features
 
@@ -77,6 +77,8 @@ Don't delete or move the `dev-companion` folder. Chrome loads the extension from
 4. Click the Dev Companion icon again, then **Open debugging workspace** to see the requests, errors and events.
 
 ### Update to the latest version
+
+When this repository has changes to the extension that your copy doesn't have yet, Dev Companion shows **Update available** in the popup and the dashboard, with what changed. Click **How to update** and follow these steps:
 
 1. Open **Command Prompt** and run:
 

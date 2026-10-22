@@ -9,6 +9,7 @@ import type { ContractBaseline, RealtimeExpectation, ServerIntegration, Settings
 import { createId, formatBytes } from '../../shared/util';
 import { estimateBytes } from '../../storage/entry-builder';
 import { Notice } from '../components/common';
+import { UpdateCommits, UpdateSteps } from '../components/UpdateBanner';
 import { ConfirmDialog } from '../components/ui';
 import {
   canRequestPermissions,
@@ -18,6 +19,8 @@ import {
   sendToWorker,
 } from '../lib/extension';
 import type { ThemeChoice } from '../lib/theme';
+import { loadBuildInfo, useUpdateStatus } from '../lib/updates';
+import type { BuildInfo } from '../lib/updates';
 
 const lines = (list: string[]) => list.join('\n');
 const parseLines = (text: string) =>
@@ -54,10 +57,29 @@ export function SettingsView({
   const [busy, setBusy] = useState(false);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const integrationsRef = useRef<HTMLElement>(null);
+  const updatesRef = useRef<HTMLElement>(null);
+  const update = useUpdateStatus();
+  const [build, setBuild] = useState<BuildInfo | null>(null);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     if (section === 'integrations') integrationsRef.current?.scrollIntoView({ block: 'start' });
+    if (section === 'updates') updatesRef.current?.scrollIntoView({ block: 'start' });
   }, [section]);
+
+  useEffect(() => {
+    void loadBuildInfo().then(setBuild);
+  }, []);
+
+  // Saved right away (not with "Save settings"), so the draft follows along.
+  const setUpdateChecks = (on: boolean) => {
+    setDraft((d) => ({ ...d, checkForUpdates: on }));
+    void saveSettings(normalizeSettings({ ...settings, checkForUpdates: on }));
+  };
+  const checkNow = () => {
+    setChecking(true);
+    void update.checkNow().finally(() => setChecking(false));
+  };
 
   const num = (key: keyof Settings) => ({
     value: String(draft[key]),
@@ -360,6 +382,55 @@ export function SettingsView({
           Data is stored in this browser profile (IndexedDB) and is never sent anywhere by Dev Companion.
           Removing the extension deletes it.
         </p>
+      </section>
+
+      <section ref={updatesRef} id="updates">
+        <h2>Updates</h2>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.checkForUpdates}
+            onChange={(e) => setUpdateChecks(e.target.checked)}
+          />{' '}
+          Tell me when the repository has a newer version (asks GitHub's public API every few hours; sends
+          only the commit this build came from)
+        </label>
+        {!build?.commit ? (
+          <p className="muted small">
+            This build was not made from a git checkout, so it cannot check for updates.
+          </p>
+        ) : (
+          <>
+            <p className="muted small">
+              Built from <code>{build.commit.slice(0, 7)}</code>
+              {build.branch && build.branch !== 'HEAD' ? ` on ${build.branch}` : ''} ·{' '}
+              {new Date(build.builtAt).toLocaleString()}
+              {update.status ? ` · last checked ${new Date(update.status.checkedAt).toLocaleString()}` : ''}
+            </p>
+            <div className="settings-actions">
+              <button type="button" className="btn" disabled={checking} onClick={checkNow}>
+                {checking ? 'Checking…' : 'Check now'}
+              </button>
+            </div>
+            {update.status?.error && (
+              <Notice kind="warning">Update check failed: {update.status.error}</Notice>
+            )}
+            {update.status && !update.status.error && !update.status.available && (
+              <p className="small">You have the latest version.</p>
+            )}
+            {update.status?.available && (
+              <>
+                <Notice kind="info">
+                  <strong>Update available.</strong> The repository has extension changes newer than this
+                  build.
+                </Notice>
+                <UpdateCommits status={update.status} />
+                <h4>How to update</h4>
+                <UpdateSteps />
+              </>
+            )}
+          </>
+        )}
       </section>
       {confirmDeleteAll && (
         <ConfirmDialog

@@ -198,6 +198,8 @@ export interface Settings {
   retentionDays: number;
   /** Parse fetch() responses of type text/event-stream incrementally (reads a clone). */
   captureFetchStreams: boolean;
+  /** Ask GitHub whether the repository has extension changes newer than this build. */
+  checkForUpdates: boolean;
   /** Origins where the opt-in page API (window.__devCompanion) and DOM notification observer run. */
   appAdapterOrigins: string[];
   /** CSS selectors watched by the notification adapter. */
