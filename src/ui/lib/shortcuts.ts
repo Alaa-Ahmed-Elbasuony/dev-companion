@@ -18,7 +18,7 @@ export const SHORTCUT_HELP: { keys: string; description: string }[] = [
   { keys: 'j / k', description: 'Next / previous row' },
   { keys: 'Enter', description: 'Open the selected row' },
   { keys: 'Esc', description: 'Close details, dialogs and the palette' },
-  { keys: 'Alt+1 … Alt+8', description: 'Switch view' },
+  { keys: 'Alt+1 … Alt+9', description: 'Switch view' },
   { keys: 'i', description: 'Investigate the selected event' },
   { keys: '?', description: 'Show shortcuts' },
 ];

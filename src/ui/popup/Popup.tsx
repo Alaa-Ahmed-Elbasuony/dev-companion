@@ -4,13 +4,7 @@ import { checkRecordableUrl } from '../../background/url-policy';
 import type { AdvancedCaptureResult } from '../../shared/messages';
 import type { RecordingState } from '../../shared/types';
 import { Notice } from '../components/common';
-import {
-  canRequestPermissions,
-  getStore,
-  getTabState,
-  requestPermissionAndStart,
-  sendToWorker,
-} from '../lib/extension';
+import { getStore, getTabState, requestPermissionAndStart, sendToWorker } from '../lib/extension';
 import { useDataVersion } from '../lib/hooks';
 
 interface TabInfo {
@@ -122,19 +116,7 @@ export function Popup() {
   const toggleAdvanced = () => {
     if (!recording) return;
     const enable = !recording.advanced;
-    // The optional permission must be requested synchronously from the click.
-    const ask =
-      enable && canRequestPermissions()
-        ? chrome.permissions.request({ permissions: ['debugger'] })
-        : Promise.resolve(true);
-    void ask.then(async (granted) => {
-      if (!granted) {
-        setMessage({
-          kind: 'warning',
-          text: 'The “debugger” permission was not granted; advanced capture stays off.',
-        });
-        return;
-      }
+    void (async () => {
       const result = await sendToWorker<AdvancedCaptureResult>({
         type: 'set-advanced-capture',
         tabId: recording.tabId,
@@ -151,7 +133,12 @@ export function Popup() {
           : { kind: 'error', text: result.message },
       );
       await refresh();
-    });
+    })().catch((err: unknown) =>
+      setMessage({
+        kind: 'error',
+        text: `Advanced capture failed: ${String(err instanceof Error ? err.message : err)}`,
+      }),
+    );
   };
 
   return (

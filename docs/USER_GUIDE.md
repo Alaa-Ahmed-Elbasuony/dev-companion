@@ -35,7 +35,7 @@ You can also start or stop recording from the **Dev Companion** panel in DevTool
 
 Click **Open debugging workspace** in the popup (it opens the current session), or use the **Dev Companion** DevTools panel.
 
-The dashboard has eight views, also reachable with Alt+1 … Alt+8:
+The dashboard has nine views, also reachable with Alt+1 … Alt+9:
 
 | View           | Shows                                                                                                                                                                                                                                                                               |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -45,6 +45,7 @@ The dashboard has eight views, also reachable with Alt+1 … Alt+8:
 | Timeline       | Everything in one chronological list: requests, realtime events, console, navigation, interactions, notifications, server spans                                                                                                                                                     |
 | Tracing        | Server traces as a waterfall, with their links to browser events (section 13)                                                                                                                                                                                                       |
 | Console        | Console errors and warnings, uncaught errors and unhandled rejections                                                                                                                                                                                                               |
+| Storage        | The live site's cookies, local and session storage, IndexedDB, Cache Storage and service workers (section 13)                                                                                                                                                                       |
 | Investigations | Findings and the investigation workspace (section 8)                                                                                                                                                                                                                                |
 | Settings       | Theme, retention, capture options, integrations, realtime expectations, API contracts, redaction, stored data                                                                                                                                                                       |
 
@@ -123,7 +124,7 @@ If a request is missing, confirm recording was on before the action and that the
 | `j` / `k`     | Next / previous row                                                      |
 | Enter         | Open the selected row                                                    |
 | Esc           | Close details, dialogs and the palette                                   |
-| Alt+1 … Alt+8 | Switch view                                                              |
+| Alt+1 … Alt+9 | Switch view                                                              |
 | `i`           | Investigate the selected event                                           |
 | `?`           | Show shortcuts                                                           |
 
@@ -209,7 +210,7 @@ WebSocket and EventSource traffic is recorded while recording is on (Settings �
 
 ### Advanced capture
 
-The **Advanced off / on** button in the dashboard header (or the **Advanced** checkbox in the popup) attaches Chrome's debugger to the recording tab. The first time, Chrome asks for the "debugger" permission. While it is on, Chrome shows "Dev Companion started debugging this browser". Advanced capture adds:
+The **Advanced off / on** button in the dashboard header (or the **Advanced** checkbox in the popup) attaches Chrome's debugger to the recording tab. While it is on, Chrome shows "Dev Companion started debugging this browser". Advanced capture adds:
 
 - every SSE event type, including types the page doesn't listen for;
 - the document's response status, redirect chain and headers;
@@ -241,6 +242,9 @@ Server tracing only works with `next dev` (it is off in production builds), so s
 - **Stop:** the popup, dashboard header or DevTools panel. New events stop being stored immediately. Stopping does **not** delete anything.
 - **Delete selected:** tick requests in the list, then click **Delete selected**.
 - **Clear session:** deletes the selected session's requests and timeline events.
+- **Clear site data:** the second header row lets you pick what to clear for the inspected site (**Cookies**, **Local storage**, **Session storage**, **IndexedDB**, **Cache storage**, **Service workers**, or **All**), then **Clear selected** clears them. Your selection is remembered. The first use asks for the optional `cookies` / `browsingData` permissions. Cookies are removed only if the site receives them, so sibling subdomains are not affected. Recorded requests are kept. Reload the page afterwards.
+- **Storage view:** click the site name in that row, or open the **Storage** tab (Alt+7), to see the site's cookies (with HttpOnly, Secure, SameSite, expiry and size), local and session storage keys and values (JSON shown as a tree), IndexedDB databases with record counts, Cache Storage entries and service workers. Delete single items with ✕ or a whole type with **Clear …**. It reads the live tab when opened; use **Refresh** after the page changes something.
+- **Tab title:** each dashboard tab is titled after the site it works on (e.g. `● app.example.com · Dev Companion`, where `●` means recording), so several dashboards are easy to tell apart.
 - **Settings:** theme (system, light, dark), retention (maximum requests, MB, body KB, timeline events, realtime messages, spans, and an optional age in days), slow-request threshold, capture toggles (console, interactions, stacks, realtime, fetch event streams, frame size), integrations, realtime expectations, OpenAPI contracts, redaction rules, **Apply redaction to stored history**, **Recompute usage**, **Delete all data**.
 - The explorer header shows how many requests are stored and their approximate size, plus warnings about storage quota problems.
 

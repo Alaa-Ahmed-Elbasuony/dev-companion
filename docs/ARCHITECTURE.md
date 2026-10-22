@@ -96,7 +96,7 @@ The worker is the authoritative gate. Even if a recorder keeps running in a page
 
 ### Advanced capture: Chrome DevTools Protocol (opt-in, implemented)
 
-Turned on per recording tab from the popup or the dashboard header, after the user grants the optional `debugger` permission. The worker attaches with `chrome.debugger.attach`, enables `Network` (without post data) and translates `Network.webSocket*`, `Network.eventSourceMessageReceived`, `Network.requestWillBeSent`, `Network.responseReceived` and `Network.loadingFailed` into the same drafts the recorder produces. The `Ingestor` merges duplicate observations of the same frame or request, using `dedupKey` and source lists. It adds:
+Turned on per recording tab from the popup or the dashboard header. `debugger` is an install-time permission (Chrome does not allow it to be optional), but nothing is attached until the user turns advanced capture on. The worker attaches with `chrome.debugger.attach`, enables `Network` (without post data) and translates `Network.webSocket*`, `Network.eventSourceMessageReceived`, `Network.requestWillBeSent`, `Network.responseReceived` and `Network.loadingFailed` into the same drafts the recorder produces. The `Ingestor` merges duplicate observations of the same frame or request, using `dedupKey` and source lists. It adds:
 
 - every SSE event type, including types the page never subscribes to;
 - the document's redirect chain, status and response headers (including headers the page cannot read);

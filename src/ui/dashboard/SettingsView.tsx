@@ -230,7 +230,7 @@ export function SettingsView({
         <p className="muted small">
           Advanced capture (chrome.debugger) is turned on per tab from the popup or the header. It sees all
           SSE event types and document response headers, but Chrome shows a debugging banner while it is
-          attached, and it needs the optional “debugger” permission.
+          attached.
         </p>
       </section>
 

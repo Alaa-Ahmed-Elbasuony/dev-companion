@@ -23,8 +23,8 @@
     "service_worker": "service-worker.js",
     "type": "module"
   },
-  "permissions": ["storage", "unlimitedStorage", "scripting", "activeTab"],
+  "permissions": ["storage", "unlimitedStorage", "scripting", "activeTab", "debugger"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "devtools_page": "devtools.html",
-  "optional_permissions": ["debugger"]
+  "optional_permissions": ["cookies", "browsingData"]
 }

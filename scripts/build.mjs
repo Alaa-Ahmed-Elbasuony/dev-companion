@@ -21,9 +21,6 @@ async function writeStatic() {
     // do not need to click Chrome's permission prompt. Never ship this build.
     manifest.name = 'Dev Companion (E2E test build)';
     manifest.host_permissions = ['http://127.0.0.1/*'];
-    // Advanced capture is opt-in at runtime; the test build pre-grants the permission
-    // so automated tests do not need to click the prompt.
-    manifest.permissions = [...manifest.permissions, 'debugger'];
   }
   await writeFile(resolve(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
   await mkdir(resolve(outDir, 'icons'), { recursive: true });
