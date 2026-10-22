@@ -114,6 +114,24 @@ export class RecordingController {
     this.broadcast();
   }
 
+  /** The tab currently recording into a session, if any. */
+  async tabForSession(sessionId: string): Promise<number | undefined> {
+    return Object.values(await this.loadState()).find((r) => r.sessionId === sessionId)?.tabId;
+  }
+
+  /**
+   * Closes a session that is not recording any more but was never marked ended
+   * (e.g. the browser restarted mid-recording). Recording sessions go through stop().
+   */
+  async closeSession(sessionId: string): Promise<void> {
+    const session = await this.store.getSession(sessionId);
+    if (!session || session.endedAt) return;
+    await this.store.putSession({ ...session, endedAt: Date.now() });
+    await this.store.markSessionIncomplete(sessionId, 'Session closed before this request completed');
+    await this.store.markConnectionsUnobserved(sessionId, 'Session closed while this connection was open');
+    this.broadcast();
+  }
+
   /** Registers the recorder for every origin that has an active recording. */
   async syncRegistration(state?: StateMap): Promise<void> {
     const current = state ?? (await this.loadState());

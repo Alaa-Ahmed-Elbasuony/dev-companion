@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { isFailure } from '../../analysis/filter';
 import type { AdvancedCaptureResult } from '../../shared/messages';
-import type { InvestigationAnchor, NetworkEntry } from '../../shared/types';
+import type { InvestigationAnchor, NetworkEntry, Session } from '../../shared/types';
 import { formatBytes, formatDuration } from '../../shared/util';
 import { Notice, Tabs } from '../components/common';
+import { SessionPicker } from '../components/SessionPicker';
 import { CommandPalette, ShortcutHelp } from '../components/ui';
 import { UpdateBanner } from '../components/UpdateBanner';
 import type { Command } from '../components/ui';
@@ -208,6 +209,18 @@ export function App() {
     });
     reload();
   };
+  const closeSession = (session: Session) => {
+    sendToWorker<{ ok: boolean; message?: string }>({ type: 'end-session', sessionId: session.id })
+      .then((result) => {
+        if (!result.ok)
+          setPanelMessage({ kind: 'error', text: result.message ?? 'Could not close the session.' });
+        else setPanelMessage({ kind: 'info', text: `Closed ${session.label}. Stored data is kept.` });
+        reload();
+      })
+      .catch((err: unknown) =>
+        setPanelMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) }),
+      );
+  };
   const toggleAdvanced = () => {
     if (!rec) return;
     const enable = !rec.advanced;
@@ -342,18 +355,12 @@ export function App() {
     <div className={`app ${embeddedTabId !== undefined ? 'app-embedded' : ''}`}>
       <header className="app-header">
         <div className="brand">Dev Companion</div>
-        <label className="session-picker">
-          <span className="muted small">Session</span>
-          <select value={data.sessionId} onChange={(e) => setSessionId(e.target.value)} aria-label="Session">
-            <option value="all">All sessions</option>
-            {data.sessions.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-                {s.endedAt ? '' : ' (active)'}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SessionPicker
+          value={data.sessionId}
+          sessions={data.sessions}
+          onChange={setSessionId}
+          onClose={closeSession}
+        />
         <div className="recording-bar" role="status" aria-live="polite">
           {data.session && (
             <span className="origin-indicator" title={`Tab ${data.session.tabId}`}>
