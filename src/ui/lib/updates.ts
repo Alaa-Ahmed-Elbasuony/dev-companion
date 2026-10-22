@@ -36,7 +36,7 @@ export interface UpdateStatus {
 
 const STATUS_KEY = 'updateStatus';
 const DISMISSED_KEY = 'updateDismissed';
-const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+const CHECK_EVERY_MS = 60 * 60 * 1000;
 /** Changes outside these paths (docs, examples, tests) do not need a rebuild. */
 const RELEVANT = /^(src\/|scripts\/|package(-lock)?\.json$|vite\.config\.ts$|tsconfig\.json$)/;
 /** GitHub lists at most 300 files per comparison; past that, assume the extension changed. */
@@ -85,7 +85,7 @@ export function compareToStatus(commit: string, body: CompareResponse, now = Dat
 }
 
 /**
- * Returns the cached status, or asks GitHub when it is older than six hours
+ * Returns the cached status, or asks GitHub when it is older than an hour
  * (or `force` is set). Returns null when checks are off, or when this build
  * has no commit (not built from a git checkout) or uncommitted source changes.
  */
@@ -97,12 +97,18 @@ export async function checkForUpdate(force = false): Promise<UpdateStatus | null
   if (cached && fresh && !force) return cached;
 
   const branch = build.branch && build.branch !== 'HEAD' ? build.branch : 'main';
+  const compare = (target: string) =>
+    fetch(
+      `https://api.github.com/repos/${build.repo}/compare/${build.commit}...${encodeURIComponent(target)}`,
+      {
+        headers: { Accept: 'application/vnd.github+json' },
+      },
+    );
   let status: UpdateStatus;
   try {
-    const res = await fetch(
-      `https://api.github.com/repos/${build.repo}/compare/${build.commit}...${encodeURIComponent(branch)}`,
-      { headers: { Accept: 'application/vnd.github+json' } },
-    );
+    let res = await compare(branch);
+    // Feature branches are deleted once merged: compare against main instead.
+    if (res.status === 404 && branch !== 'main') res = await compare('main');
     if (res.status === 404) {
       // The build's commit is not on GitHub (local, unpushed work): nothing to compare.
       status = {
