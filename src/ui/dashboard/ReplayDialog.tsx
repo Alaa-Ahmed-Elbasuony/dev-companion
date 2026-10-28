@@ -259,7 +259,7 @@ export function ReplayDialog({
   );
 }
 
-function ReplayResponse({ id }: { id: string }) {
+export function ReplayResponse({ id }: { id: string }) {
   const [body, setBody] = useState<Awaited<ReturnType<Awaited<ReturnType<typeof getStore>>['getBodies']>>>();
   useEffect(() => {
     void getStore()

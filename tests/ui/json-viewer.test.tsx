@@ -106,6 +106,44 @@ describe('CodeView', () => {
     render(<CodeView text={'<script>alert(1)</script><b>bold</b>'} json={false} />);
     expect(document.querySelector('pre.code script, pre.code b')).toBeNull();
   });
+
+  it('searches the shown text case-insensitively and steps through matches', () => {
+    const text = '{"name":"Alice","friend":{"name":"ALICE"},"id":1}';
+    render(<CodeView text={text} searchable />);
+    const input = screen.getByRole('searchbox', { name: 'Search body' });
+    fireEvent.change(input, { target: { value: 'alice' } });
+    expect(screen.getByText('1 / 2')).toBeTruthy();
+    const hits = () => [...document.querySelectorAll('mark.search-hit')].map((m) => m.textContent);
+    expect(hits()).toEqual(['Alice', 'ALICE']);
+    expect(document.querySelector('.search-hit-active')!.textContent).toBe('Alice');
+    // Highlighting and syntax colouring coexist; the text itself is unchanged.
+    expect(document.querySelector('.tok-string .search-hit')).toBeTruthy();
+    expect(document.querySelector('pre.code')!.textContent).toBe(JSON.stringify(JSON.parse(text), null, 2));
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByText('2 / 2')).toBeTruthy();
+    expect(document.querySelector('.search-hit-active')!.textContent).toBe('ALICE');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByText('1 / 2')).toBeTruthy();
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+    expect(screen.getByText('2 / 2')).toBeTruthy();
+
+    fireEvent.change(input, { target: { value: 'nope' } });
+    expect(screen.getByText('No matches')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Next match' })).toHaveProperty('disabled', true);
+    fireEvent.change(input, { target: { value: 'name' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect((input as HTMLInputElement).value).toBe('');
+    expect(document.querySelector('mark')).toBeNull();
+  });
+
+  it('marks matches that span token boundaries', () => {
+    render(<CodeView text='{"a":1}' searchable />);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '"a": 1' } });
+    const marks = [...document.querySelectorAll('mark.search-hit')];
+    expect(marks.map((m) => m.textContent).join('')).toBe('"a": 1');
+    expect(marks.every((m) => m.classList.contains('search-hit-active'))).toBe(true);
+  });
 });
 
 describe('BodyView', () => {

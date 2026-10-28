@@ -81,6 +81,8 @@ export function InvestigationsView(
       {tab === 'compare' && (
         <CompareView
           ids={props.compareIds}
+          entries={props.data.entries}
+          onPick={(slot, id) => props.setCompareIds({ ...props.compareIds, [slot]: id })}
           onSwap={() => props.setCompareIds({ a: props.compareIds.b, b: props.compareIds.a })}
           onClear={() => props.setCompareIds({})}
           contracts={props.contracts}

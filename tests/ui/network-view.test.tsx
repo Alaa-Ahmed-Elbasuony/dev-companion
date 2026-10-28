@@ -72,6 +72,7 @@ function Harness({
     reload: vi.fn(),
     onCompare: vi.fn(),
     onReplay: vi.fn(),
+    onPlayground: vi.fn(),
     version: 0,
     setSession: vi.fn(),
   };

@@ -26,6 +26,7 @@ import { NetworkView } from './NetworkView';
 import { OverviewView } from './OverviewView';
 import { RealtimeView } from './RealtimeView';
 import { ReplayDialog } from './ReplayDialog';
+import { RequestPlayground } from './RequestPlayground';
 import { SettingsView } from './SettingsView';
 import { StorageView } from './StorageView';
 import { TimelineView } from './TimelineView';
@@ -74,6 +75,7 @@ export function App() {
   );
   const [compareIds, setCompareIds] = useState<{ a?: string; b?: string }>({});
   const [replayEntry, setReplayEntry] = useState<NetworkEntry | null>(null);
+  const [playgroundEntry, setPlaygroundEntry] = useState<NetworkEntry | null>(null);
   const [palette, setPalette] = useState(false);
   const [help, setHelp] = useState(false);
   const [panelMessage, setPanelMessage] = useState<{
@@ -258,8 +260,12 @@ export function App() {
         investigate,
         openEntry,
         reload,
-        onCompare: (slot, id) => setCompareIds((c) => ({ ...c, [slot]: id })),
+        onCompare: (slot, id) => {
+          setCompareIds((c) => ({ ...c, [slot]: id }));
+          navigate('investigations', { tab: 'compare' });
+        },
         onReplay: setReplayEntry,
+        onPlayground: setPlaygroundEntry,
         version,
         setSession: setSessionId,
       }
@@ -593,6 +599,18 @@ export function App() {
           onCompare={(a, b) => {
             setCompareIds({ a, b });
             setReplayEntry(null);
+            navigate('investigations', { tab: 'compare' });
+          }}
+        />
+      )}
+      {playgroundEntry && (
+        <RequestPlayground
+          entry={playgroundEntry}
+          settings={settings}
+          onClose={() => setPlaygroundEntry(null)}
+          onCompare={(a, b) => {
+            setCompareIds({ a, b });
+            setPlaygroundEntry(null);
             navigate('investigations', { tab: 'compare' });
           }}
         />
