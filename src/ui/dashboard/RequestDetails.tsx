@@ -41,6 +41,7 @@ interface Props {
   onClose: () => void;
   onCompare: (slot: 'a' | 'b', id: string) => void;
   onReplay: (entry: NetworkEntry) => void;
+  onPlayground: (entry: NetworkEntry) => void;
   onChanged: () => void;
   onInvestigate: () => void;
   onOpenRef: (ref: EventRef) => void;
@@ -61,6 +62,7 @@ export function RequestDetails({
   onClose,
   onCompare,
   onReplay,
+  onPlayground,
   onChanged,
   onInvestigate,
   onOpenRef,
@@ -305,6 +307,14 @@ export function RequestDetails({
         <CopyButton label="Copy JSON" text={sanitizedJson} />
         <button type="button" className="btn btn-small" onClick={() => onReplay(entry)}>
           Replay…
+        </button>
+        <button
+          type="button"
+          className="btn btn-small"
+          onClick={() => onPlayground(entry)}
+          title="Change params, headers, body or method and send variations of this request"
+        >
+          Try it…
         </button>
         <button
           type="button"

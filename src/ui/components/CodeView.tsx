@@ -1,65 +1,233 @@
 // JSON pretty-printing with syntax highlighting. Renders text nodes only (no
 // innerHTML), so captured or imported content cannot inject markup.
-import { useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import type { CapturedBody } from '../../shared/types';
 import { formatBytes, tryParseJson } from '../../shared/util';
 import { queryForCopy } from '../lib/copy-format';
 import { CopyButton, CopyIcon, Notice } from './common';
 
 const HIGHLIGHT_LIMIT = 200_000;
+/** Matches beyond this are counted but not marked, so huge bodies stay responsive. */
+const MARK_LIMIT = 5_000;
 const TOKEN = /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
 
-export function highlightJson(text: string): ReactNode[] {
-  const out: ReactNode[] = [];
+interface Segment {
+  text: string;
+  className?: string;
+}
+
+function jsonSegments(text: string): Segment[] {
+  const out: Segment[] = [];
   let last = 0;
-  let key = 0;
   for (const m of text.matchAll(TOKEN)) {
     const index = m.index ?? 0;
-    if (index > last) out.push(text.slice(last, index));
+    if (index > last) out.push({ text: text.slice(last, index) });
     if (m[1]) {
-      out.push(
-        <span key={key++} className={m[2] ? 'tok-key' : 'tok-string'}>
-          {m[1]}
-        </span>,
-      );
-      if (m[2]) out.push(m[2]);
+      out.push({ text: m[1], className: m[2] ? 'tok-key' : 'tok-string' });
+      if (m[2]) out.push({ text: m[2] });
     } else if (m[3]) {
-      out.push(
-        <span key={key++} className="tok-literal">
-          {m[3]}
-        </span>,
-      );
+      out.push({ text: m[3], className: 'tok-literal' });
     } else if (m[4]) {
-      out.push(
-        <span key={key++} className="tok-number">
-          {m[4]}
-        </span>,
-      );
+      out.push({ text: m[4], className: 'tok-number' });
     }
     last = index + m[0].length;
   }
-  if (last < text.length) out.push(text.slice(last));
+  if (last < text.length) out.push({ text: text.slice(last) });
   return out;
 }
 
-export function CodeView({ text, json }: { text: string; json?: boolean }) {
+export function highlightJson(text: string): ReactNode[] {
+  return jsonSegments(text).map((s, i) =>
+    s.className ? (
+      <span key={i} className={s.className}>
+        {s.text}
+      </span>
+    ) : (
+      s.text
+    ),
+  );
+}
+
+/** Start offsets of every case-insensitive occurrence of `query` in `text`. */
+export function findMatches(text: string, query: string): number[] {
+  if (!query) return [];
+  const hay = text.toLowerCase();
+  const needle = query.toLowerCase();
+  const out: number[] = [];
+  for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + needle.length)) out.push(i);
+  return out;
+}
+
+/**
+ * Renders segments with search matches wrapped in <mark>. A match that spans
+ * token boundaries is split into several marks that share its index.
+ */
+function renderWithMatches(
+  segments: Segment[],
+  matches: number[],
+  length: number,
+  active: number,
+  activeRef: (el: HTMLElement | null) => void,
+): ReactNode[] {
+  const out: ReactNode[] = [];
+  const marked = Math.min(matches.length, MARK_LIMIT);
+  let m = 0;
+  let pos = 0;
+  let key = 0;
+  for (const seg of segments) {
+    const end = pos + seg.text.length;
+    const pieces: ReactNode[] = [];
+    let cursor = pos;
+    while (cursor < end) {
+      while (m < marked && matches[m]! + length <= cursor) m++;
+      const start = m < marked ? Math.max(matches[m]!, cursor) : end;
+      if (start >= end) {
+        pieces.push(seg.text.slice(cursor - pos));
+        break;
+      }
+      if (start > cursor) pieces.push(seg.text.slice(cursor - pos, start - pos));
+      const stop = Math.min(matches[m]! + length, end);
+      const isActive = m === active;
+      pieces.push(
+        <mark
+          key={key++}
+          className={isActive ? 'search-hit search-hit-active' : 'search-hit'}
+          ref={isActive && start === matches[m] ? activeRef : undefined}
+        >
+          {seg.text.slice(start - pos, stop - pos)}
+        </mark>,
+      );
+      cursor = stop;
+    }
+    if (seg.className) {
+      out.push(
+        <span key={key++} className={seg.className}>
+          {pieces}
+        </span>,
+      );
+    } else {
+      out.push(...pieces);
+    }
+    pos = end;
+  }
+  return out;
+}
+
+function CodeSearch({
+  query,
+  onQuery,
+  count,
+  active,
+  onStep,
+}: {
+  query: string;
+  onQuery: (q: string) => void;
+  count: number;
+  active: number;
+  onStep: (delta: number) => void;
+}) {
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      onStep(e.shiftKey ? -1 : 1);
+    } else if (e.key === 'Escape' && query) {
+      e.preventDefault();
+      e.stopPropagation();
+      onQuery('');
+    }
+  };
+  return (
+    <div className="code-search" role="search">
+      <input
+        type="search"
+        placeholder="Search body"
+        aria-label="Search body"
+        value={query}
+        onChange={(e) => onQuery(e.target.value)}
+        onKeyDown={onKeyDown}
+      />
+      <span className="muted small code-search-count" aria-live="polite">
+        {query ? (count ? `${active + 1} / ${count}` : 'No matches') : ''}
+      </span>
+      <button
+        type="button"
+        className="btn btn-small btn-ghost"
+        aria-label="Previous match"
+        title="Previous match (Shift+Enter)"
+        disabled={!count}
+        onClick={() => onStep(-1)}
+      >
+        ↑
+      </button>
+      <button
+        type="button"
+        className="btn btn-small btn-ghost"
+        aria-label="Next match"
+        title="Next match (Enter)"
+        disabled={!count}
+        onClick={() => onStep(1)}
+      >
+        ↓
+      </button>
+    </div>
+  );
+}
+
+export function CodeView({ text, json, searchable }: { text: string; json?: boolean; searchable?: boolean }) {
   const [pretty, setPretty] = useState(true);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const activeEl = useRef<HTMLElement | null>(null);
   const parsed = useMemo(() => (json === false ? { ok: false as const } : tryParseJson(text)), [text, json]);
   const display = parsed.ok && pretty ? JSON.stringify(parsed.value, null, 2) : text;
-  const content = parsed.ok && display.length <= HIGHLIGHT_LIMIT ? highlightJson(display) : display;
+  const matches = useMemo(
+    () => (searchable ? findMatches(display, query) : []),
+    [searchable, display, query],
+  );
+  const current = matches.length ? Math.min(active, matches.length - 1) : 0;
+  const content = useMemo(() => {
+    const highlight = parsed.ok && display.length <= HIGHLIGHT_LIMIT;
+    if (!matches.length) return highlight ? highlightJson(display) : display;
+    const segments = highlight ? jsonSegments(display) : [{ text: display }];
+    return renderWithMatches(segments, matches, query.length, current, (el) => (activeEl.current = el));
+  }, [parsed.ok, display, matches, query.length, current]);
+
+  useEffect(() => {
+    activeEl.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [content]);
+
+  const step = (delta: number) => {
+    if (!matches.length) return;
+    setActive((current + delta + matches.length) % matches.length);
+  };
+
   return (
     <div className="code-wrap">
-      <div className="code-toolbar">
-        {parsed.ok && (
-          <button type="button" className="btn btn-small btn-ghost" onClick={() => setPretty((p) => !p)}>
-            {pretty ? 'Raw' : 'Pretty'}
-          </button>
-        )}
-        {/* Copies exactly what is shown: pretty or raw. */}
-        <CopyIcon label={pretty ? 'Copy' : 'Copy raw'} text={() => display} raw />
+      {searchable && (
+        <CodeSearch
+          query={query}
+          onQuery={(q) => {
+            setQuery(q);
+            setActive(0);
+          }}
+          count={matches.length}
+          active={current}
+          onStep={step}
+        />
+      )}
+      <div className="code-body">
+        <div className="code-toolbar">
+          {parsed.ok && (
+            <button type="button" className="btn btn-small btn-ghost" onClick={() => setPretty((p) => !p)}>
+              {pretty ? 'Raw' : 'Pretty'}
+            </button>
+          )}
+          {/* Copies exactly what is shown: pretty or raw. */}
+          <CopyIcon label={pretty ? 'Copy' : 'Copy raw'} text={() => display} raw />
+        </div>
+        <pre className="code">{content}</pre>
       </div>
-      <pre className="code">{content}</pre>
     </div>
   );
 }
@@ -149,7 +317,7 @@ export function BodyView({ body, label }: { body: CapturedBody | undefined; labe
         body.kind === 'form' ? (
           <FormView text={body.text} />
         ) : (
-          <CodeView text={body.text} json={body.kind === 'json' || body.kind === 'text'} />
+          <CodeView text={body.text} json={body.kind === 'json' || body.kind === 'text'} searchable />
         )
       ) : (
         <p className="muted">Body content was not captured.</p>

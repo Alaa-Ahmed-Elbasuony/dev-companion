@@ -992,6 +992,7 @@ export function NetworkView(props: ViewProps) {
           onClose={() => select(null)}
           onCompare={props.onCompare}
           onReplay={props.onReplay}
+          onPlayground={props.onPlayground}
           onChanged={props.reload}
           onInvestigate={() => props.investigate({ type: 'request', id: selected.id })}
           onOpenRef={(ref) =>

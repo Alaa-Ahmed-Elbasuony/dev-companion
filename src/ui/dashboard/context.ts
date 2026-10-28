@@ -16,6 +16,7 @@ export interface ViewProps {
   reload: () => void;
   onCompare: (slot: 'a' | 'b', id: string) => void;
   onReplay: (entry: NetworkEntry) => void;
+  onPlayground: (entry: NetworkEntry) => void;
   version: number;
   setSession: (id: string) => void;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { SUPPORTED_SCHEMA_KEYWORDS } from '../../analysis/contracts';
 import { compareEntries, VOLATILE_HEADERS } from '../../analysis/request-diff';
 import type { BodyDiff, HeaderDiff } from '../../analysis/request-diff';
@@ -122,6 +122,108 @@ function BodyDiffTable({ diff, title }: { diff: BodyDiff; title: string }) {
   );
 }
 
+const PICKER_LIMIT = 50;
+
+/**
+ * Searchable list of the session's requests for one compare slot. Requests to
+ * the same endpoint as the other side are listed first, newest first within.
+ */
+function RequestPicker({
+  entries,
+  other,
+  exclude,
+  onPick,
+  onClose,
+}: {
+  entries: NetworkEntry[];
+  other?: NetworkEntry;
+  exclude?: string;
+  onPick: (id: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [index, setIndex] = useState(0);
+  const input = useRef<HTMLInputElement>(null);
+  const otherKey = other ? endpointKey(other.method, other.url) : undefined;
+  const matches = useMemo(() => {
+    const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const scored = entries
+      .filter((e) => e.id !== exclude)
+      .filter((e) => {
+        const hay = `${e.method} ${e.status ?? e.state} ${e.url}`.toLowerCase();
+        return tokens.every((t) => hay.includes(t));
+      })
+      .map((e) => ({ entry: e, same: otherKey !== undefined && endpointKey(e.method, e.url) === otherKey }));
+    scored.sort((x, y) => Number(y.same) - Number(x.same) || y.entry.startedAt - x.entry.startedAt);
+    return scored;
+  }, [entries, exclude, otherKey, query]);
+  const shown = matches.slice(0, PICKER_LIMIT);
+  useEffect(() => input.current?.focus(), []);
+  useEffect(() => setIndex(0), [query]);
+
+  return (
+    <div className="cmp-picker">
+      <input
+        ref={input}
+        type="search"
+        placeholder="Filter by method, status or URL…"
+        aria-label="Filter requests"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setIndex((i) => Math.min(shown.length - 1, i + 1));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setIndex((i) => Math.max(0, i - 1));
+          } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (shown[index]) onPick(shown[index].entry.id);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            onClose();
+          }
+        }}
+      />
+      <ul role="listbox" aria-label="Requests" className="cmp-picker-list">
+        {shown.length === 0 && (
+          <li className="muted pad-s">
+            {entries.length === 0 ? 'No requests in this session.' : 'No matching requests.'}
+          </li>
+        )}
+        {shown.map(({ entry: e, same }, i) => (
+          <li
+            key={e.id}
+            role="option"
+            aria-selected={i === index}
+            className={i === index ? 'cmp-picker-active' : ''}
+            onMouseEnter={() => setIndex(i)}
+            onMouseDown={(ev) => {
+              ev.preventDefault();
+              onPick(e.id);
+            }}
+          >
+            <MethodTag method={e.method} /> <StatusPill entry={e} /> <span className="break">{e.url}</span>
+            <span className="muted small cmp-picker-meta">
+              {same && <span className="tag">same endpoint</span>}{' '}
+              {new Date(e.startedAt).toLocaleTimeString()} · {formatDuration(e.duration)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div className="cmp-picker-foot muted small">
+        {matches.length > PICKER_LIMIT
+          ? `Showing ${PICKER_LIMIT} of ${matches.length} — type to narrow down.`
+          : `${matches.length} request${matches.length === 1 ? '' : 's'}`}
+        <button type="button" className="link small" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ContractsPanel({
   contracts,
   suggestedKey,
@@ -214,6 +316,8 @@ function ContractsPanel({
 
 export function CompareView({
   ids,
+  entries,
+  onPick,
   onSwap,
   onClear,
   contracts,
@@ -221,6 +325,8 @@ export function CompareView({
   onOpenEntry,
 }: {
   ids: { a?: string; b?: string };
+  entries: NetworkEntry[];
+  onPick: (slot: 'a' | 'b', id: string) => void;
   onSwap: () => void;
   onClear: () => void;
   contracts: ContractBaseline[];
@@ -229,6 +335,7 @@ export function CompareView({
 }) {
   const [a, setA] = useState<Loaded | null>(null);
   const [b, setB] = useState<Loaded | null>(null);
+  const [picking, setPicking] = useState<'a' | 'b' | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -251,30 +358,57 @@ export function CompareView({
   const comparison = a && b ? compareEntries(a.entry, a.bodies, b.entry, b.bodies) : null;
   const suggestedKey = a ? endpointKey(a.entry.method, a.entry.url) : undefined;
 
-  const slot = (label: string, loaded: Loaded | null) => (
-    <div className="cmp-slot">
-      <div className="muted small">{label}</div>
-      {loaded ? (
-        <button type="button" className="link" onClick={() => onOpenEntry(loaded.entry.id)}>
-          <MethodTag method={loaded.entry.method} /> <StatusPill entry={loaded.entry} />{' '}
-          <span className="break">{loaded.entry.url}</span>
-        </button>
-      ) : (
-        <span className="muted">Not set — open a request and choose “Compare as {label.slice(-1)}”.</span>
-      )}
-      {loaded && (
-        <div className="muted small">
-          {new Date(loaded.entry.startedAt).toLocaleString()} · {loaded.entry.source}
+  const slot = (key: 'a' | 'b', loaded: Loaded | null, other: Loaded | null) => {
+    const name = key.toUpperCase();
+    return (
+      <div className="cmp-slot">
+        <div className="cmp-slot-head">
+          <span className="muted small">Request {name}</span>
+          {picking !== key && (
+            <button
+              type="button"
+              className="btn btn-small"
+              onClick={() => setPicking(key)}
+              aria-label={`${loaded ? 'Change' : 'Choose'} request ${name}`}
+            >
+              {loaded ? 'Change' : 'Choose…'}
+            </button>
+          )}
         </div>
-      )}
-    </div>
-  );
+        {picking === key ? (
+          <RequestPicker
+            entries={entries}
+            other={other?.entry}
+            exclude={other?.entry.id}
+            onPick={(id) => {
+              onPick(key, id);
+              // Move straight on to the empty side, if any.
+              setPicking(other ? null : key === 'a' ? 'b' : 'a');
+            }}
+            onClose={() => setPicking(null)}
+          />
+        ) : loaded ? (
+          <>
+            <button type="button" className="link" onClick={() => onOpenEntry(loaded.entry.id)}>
+              <MethodTag method={loaded.entry.method} /> <StatusPill entry={loaded.entry} />{' '}
+              <span className="break">{loaded.entry.url}</span>
+            </button>
+            <div className="muted small">
+              {new Date(loaded.entry.startedAt).toLocaleString()} · {loaded.entry.source}
+            </div>
+          </>
+        ) : (
+          <span className="muted">Not set — choose a request, or use “Compare as {name}” on one.</span>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="compare">
       <div className="cmp-head">
-        {slot('Request A', a)}
-        {slot('Request B', b)}
+        {slot('a', a, b)}
+        {slot('b', b, a)}
         <div className="cmp-actions">
           <button type="button" className="btn btn-small" onClick={onSwap} disabled={!a && !b}>
             Swap
