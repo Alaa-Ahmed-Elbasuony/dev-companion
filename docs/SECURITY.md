@@ -27,6 +27,7 @@ The E2E test build (`npm run build:e2e`, output in `dist-e2e/`) adds `host_permi
 - Only on `http:` and `https:` pages whose host you granted, and only in tabs where recording is active. The worker ignores events from other tabs.
 - Never on `chrome://`, extension pages, the Chrome Web Store, or `file://` (Chrome forbids most of these, and the URL policy rejects the rest).
 - Only in the top frame.
+- Content scripts cannot use extension storage. The worker calls `chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' })` every time it starts, before it registers or injects any content script, so settings and simulation rules are readable and writable only by the worker and extension pages (`chrome.storage.session` is closed to content scripts by default). The bridge never needed storage: it gets its capture config from the worker. On a Chrome build that does not accept the call, storage keeps Chrome's default access and a warning is logged in the worker.
 
 ## Trust boundaries
 
@@ -97,6 +98,25 @@ Dev Companion sends no analytics or telemetry. It makes two kinds of outbound re
 - Chrome asks for host access to the target origin before the first replay to it.
 
 If a request type cannot be replayed reliably (truncated or binary body), the UI says so and offers editing or cURL instead.
+
+## Simulation
+
+Simulation (mock responses, latency and failures) changes what a page receives, so it is off by default and limited three ways. Rules run on a page only while **all** of these hold:
+
+- the page's origin, as Chrome reports it to the worker, is on the simulation allowlist. The list starts empty and origins are added only by an explicit action in the Simulation view; nothing is added automatically;
+- the tab is recording that origin and is not paused;
+- the master switch is on. It is stored in `chrome.storage.session`, which content scripts cannot read or write by default, and it resets when the browser restarts or the extension reloads.
+
+Other safeguards:
+
+- Only extension pages can change the switch or the rules: the worker refuses `set-simulation-armed`, `get-simulation-state` and `update-simulation-rules` from content scripts and pages. It validates every rule itself (invalid rules are refused, not coerced) and applies each edit to the rules stored at that moment, refusing edits made from a stale copy.
+- Rules and the allowlist are stored in `chrome.storage.local`, which is closed to content scripts (see [Where scripts run](#where-scripts-run)). Even if it were not, a forged rule or origin could not run anything without the session-scoped switch.
+- A page receives rules with a 60-second lease that the extension renews; if the extension is reloaded or removed, or can no longer renew it, the page stops simulating and sends the requests it was holding unchanged.
+- The page confirms the rules it applies, and the UI shows simulation as active only after that confirmation from the document currently loaded in the tab. The confirmation comes from the page's main world, so the page's own scripts could forge it (or block it): it shows what the page reports, which is not a security boundary.
+- Authentication and payment endpoints (hosts such as `login.…` or `api.stripe.com`, path segments such as `login`, `token`, `oauth`, `checkout`, `payment`, unambiguous words inside compound names such as `resetPassword`, and phrases such as "refresh token" or "credit card") are never simulated unless the rule explicitly allows it. This is a name-based safety heuristic, not a guarantee that every sensitive endpoint is recognized (query-routed endpoints and GraphQL operations are not).
+- Rules match the request URL as the browser resolves it (against the document's base URL, so `<base href>` is respected); the request itself is never changed.
+- Mocked responses never expose `Set-Cookie`. Replay and the Request playground are sent from the extension and are never simulated.
+- Every simulated request is recorded with the rule that changed it and whether it reached the network.
 
 ## Server tracing
 

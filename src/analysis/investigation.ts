@@ -3,6 +3,7 @@
 // verified point of divergence, ranked causes, missing evidence, next steps,
 // reproduction steps and regression-test suggestions. Never invents data:
 // every statement is derived from recorded records and labeled.
+import type { SimulatedInfo } from '../shared/simulation';
 import type {
   EntryBodies,
   InvestigationAnchor,
@@ -20,6 +21,7 @@ import { isFailure } from './filter';
 import { appPacket, eventPayload, getPath } from './investigator-rules';
 import type { EventRef, Link } from './trace-correlate';
 import { linkBrowserToServer, linkRequestsToRealtime } from './trace-correlate';
+import { describeSimulated, reachedNetwork, serverResponded } from './simulated-traffic';
 import { messageTitle } from './unified-timeline';
 
 export interface InvestigationData {
@@ -48,6 +50,8 @@ export interface RelatedEvent {
   failed: boolean;
   /** When the outcome became known (response received, span ended); used to order failures. */
   outcomeAt: number;
+  /** Set for a request a simulation rule produced or altered: its outcome is not the server's. */
+  simulated?: SimulatedInfo;
 }
 
 export interface Divergence {
@@ -72,7 +76,13 @@ export interface InvestigationResult {
   whatHappened: string;
   related: RelatedEvent[];
   divergence?: Divergence;
-  causes: (Hypothesis & { findingId: string; findingTitle: string })[];
+  causes: (Hypothesis & {
+    findingId: string;
+    findingTitle: string;
+    basis?: Finding['basis'];
+    /** The finding involves simulated requests whose outcome the rule produced. */
+    simulated?: boolean;
+  })[];
   findings: Finding[];
   missingEvidence: string[];
   nextSteps: string[];
@@ -92,7 +102,7 @@ const LEVEL_RANK: Record<EvidenceLevel, number> = { confirmed: 0, strong: 1, pos
 function describe(
   ref: EventRef,
   data: InvestigationData,
-): { time: number; title: string; failed: boolean; outcomeAt: number } | null {
+): { time: number; title: string; failed: boolean; outcomeAt: number; simulated?: SimulatedInfo } | null {
   switch (ref.type) {
     case 'request': {
       const e = data.entries.find((x) => x.id === ref.id);
@@ -100,8 +110,9 @@ function describe(
         ? {
             time: e.startedAt,
             outcomeAt: e.endedAt ?? e.startedAt,
-            title: `${e.method} ${pathOf(e.url)} → ${e.status ?? e.state}`,
+            title: `${e.method} ${pathOf(e.url)} → ${e.status ?? e.state}${e.simulated ? ' (simulated)' : ''}`,
             failed: isFailure(e),
+            ...(e.simulated ? { simulated: e.simulated } : {}),
           }
         : null;
     }
@@ -162,8 +173,10 @@ export function computeLinks(data: InvestigationData): Link[] {
   const links: Link[] = [];
   const responseTexts = new Map<string, string>();
   for (const [id, b] of data.bodies ?? []) if (b.response?.text) responseTexts.set(id, b.response.text);
-  links.push(...linkBrowserToServer(data.entries, data.timeline, data.spans));
-  links.push(...linkRequestsToRealtime(data.entries, data.messages, responseTexts));
+  // A request a rule answered without sending cannot have server spans or cause server events.
+  const sent = data.entries.filter(reachedNetwork);
+  links.push(...linkBrowserToServer(sent, data.timeline, data.spans));
+  links.push(...linkRequestsToRealtime(sent, data.messages, responseTexts));
   for (const [eventId, requestIds] of correlate(data.entries, data.timeline)) {
     const event = data.timeline.find((t) => t.id === eventId)!;
     for (const id of requestIds) {
@@ -179,6 +192,13 @@ export function computeLinks(data: InvestigationData): Link[] {
     }
   }
   return links;
+}
+
+/** Why a simulated failure is (or, for a delayed request the server answered, is not) the rule's. */
+function simulatedFailureNote(info: SimulatedInfo, entry: NetworkEntry | undefined): string {
+  return entry && serverResponded(entry)
+    ? ` The server returned this response; simulation rule "${info.ruleName}" only delayed the request.`
+    : ` ${describeSimulated(info, entry)}; the failure did not come from the server.`;
 }
 
 function anchorRef(anchor: InvestigationAnchor): EventRef {
@@ -292,9 +312,15 @@ export function buildInvestigation(
       time: earliestVerified.time,
       level: 'confirmed',
       why:
-        earliestVerified.relation === 'anchor'
+        (earliestVerified.relation === 'anchor'
           ? 'The selected event is the earliest failure linked to it by evidence.'
-          : `Earliest failure linked by evidence (${earliestVerified.evidence}).`,
+          : `Earliest failure linked by evidence (${earliestVerified.evidence}).`) +
+        (earliestVerified.simulated
+          ? simulatedFailureNote(
+              earliestVerified.simulated,
+              data.entries.find((e) => e.id === earliestVerified.ref.id),
+            )
+          : ''),
     };
   } else if (!anchorInfo.failed) {
     divergence = undefined;
@@ -313,7 +339,7 @@ export function buildInvestigation(
     missingEvidence.add(
       'Backend/SSR spans: no server integration is configured, so server-side requests and errors are not visible',
     );
-  } else if (anchorEntry && !hasServerLink) {
+  } else if (anchorEntry && !hasServerLink && reachedNetwork(anchorEntry)) {
     missingEvidence.add(
       'No server span is linked to this request (no shared trace id, and no unambiguous path/time match)',
     );
@@ -339,7 +365,13 @@ export function buildInvestigation(
           level: 'possible' as const,
           because: 'Common cause; not verified.',
         }))
-      ).map((h) => ({ ...h, findingId: f.id, findingTitle: f.title })),
+      ).map((h) => ({
+        ...h,
+        findingId: f.id,
+        findingTitle: f.title,
+        ...(f.basis ? { basis: f.basis } : {}),
+        ...(f.simulation && !f.simulation.outcomeFromServer ? { simulated: true } : {}),
+      })),
     )
     .sort((a, b) => LEVEL_RANK[a.level] - LEVEL_RANK[b.level]);
 
@@ -357,10 +389,24 @@ export function buildInvestigation(
       ? notificationChecklist(data, { message: messageAnchor, trigger: anchorEntry }, links)
       : undefined;
 
+  const simulatedEntries = relatedList
+    .filter((r) => r.simulated)
+    .map((r) => data.entries.find((e) => e.id === r.ref.id)!);
+  const synthetic = simulatedEntries.filter((e) => !serverResponded(e)).length;
+  const simulationNote = anchorInfo.simulated
+    ? ` ${describeSimulated(anchorInfo.simulated, anchorEntry)}.`
+    : simulatedEntries.length
+      ? ` ${simulatedEntries.length} related request(s) were simulated; ${
+          synthetic === simulatedEntries.length
+            ? 'their outcomes did not come from the server.'
+            : `the outcome of ${synthetic} did not come from the server (the others were answered by the server, with added delay).`
+        }`
+      : '';
+
   return {
     anchor,
     title: anchorInfo.title,
-    whatHappened: `${anchorInfo.title} at ${time(anchorInfo.time)}.${anchorInfo.failed ? ' This event failed.' : ''} ${relatedList.length - 1} related event(s): ${relatedList.filter((r) => r.relation === 'explicit' || r.relation === 'same-trace').length} linked by shared identifiers, ${relatedList.filter((r) => r.relation === 'probable').length} by time only.`,
+    whatHappened: `${anchorInfo.title} at ${time(anchorInfo.time)}.${anchorInfo.failed ? ' This event failed.' : ''}${simulationNote} ${relatedList.length - 1} related event(s): ${relatedList.filter((r) => r.relation === 'explicit' || r.relation === 'same-trace').length} linked by shared identifiers, ${relatedList.filter((r) => r.relation === 'probable').length} by time only.`,
     related: relatedList,
     divergence,
     causes,
@@ -407,9 +453,12 @@ function reproductionSteps(
   for (const e of data.entries) {
     if ((tab !== undefined && e.tabId !== tab) || e.startedAt < from || e.startedAt > anchorTime) continue;
     if (MUTATING_METHODS.has(e.method)) {
+      const outcome = `${e.method} ${pathOf(e.url)} → ${e.status ?? e.state}`;
       steps.push({
         time: e.startedAt,
-        text: `(app sends ${e.method} ${pathOf(e.url)} → ${e.status ?? e.state}; MUTATION: creates or changes server data)`,
+        text: !reachedNetwork(e)
+          ? `(app sends ${outcome}; SIMULATED by rule "${e.simulated!.ruleName}": not sent, the server never received it)`
+          : `(app sends ${outcome}; MUTATION: creates or changes server data${e.simulated ? `; delayed by simulation rule "${e.simulated.ruleName}"` : ''})`,
       });
     }
   }

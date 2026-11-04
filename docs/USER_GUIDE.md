@@ -2,7 +2,7 @@
 
 ## 1. What it does
 
-Dev Companion records the API requests a web page makes (`fetch`, `XMLHttpRequest`, `navigator.sendBeacon`) and its realtime traffic (WebSocket, Socket.IO, SignalR, server-sent events) while you reproduce a bug. It keeps the requests, their payloads, their readable responses and the realtime messages after they finish, after page navigation and after reloads. It also records console errors and other page events, so you can see what happened around a failed request. Optionally, it shows what your development server did while rendering the page (section 12).
+Dev Companion records the API requests a web page makes (`fetch`, `XMLHttpRequest`, `navigator.sendBeacon`) and its realtime traffic (WebSocket, Socket.IO, SignalR, server-sent events) while you reproduce a bug. It keeps the requests, their payloads, their readable responses and the realtime messages after they finish, after page navigation and after reloads. It also records console errors and other page events, so you can see what happened around a failed request. Optionally, it shows what your development server did while rendering the page (section 13). On development origins it can also mock responses and simulate slow or failing APIs (section 11).
 
 It is designed for React and TypeScript apps, but it works with any site that uses `fetch` or XHR.
 
@@ -35,7 +35,7 @@ You can also start or stop recording from the **Dev Companion** panel in DevTool
 
 Click **Open debugging workspace** in the popup (it opens the current session), or use the **Dev Companion** DevTools panel.
 
-The dashboard has nine views, also reachable with Alt+1 … Alt+9:
+The dashboard has ten views, also reachable with Alt+1 … Alt+9 and Alt+0:
 
 | View           | Shows                                                                                                                                                                                                                                                                               |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -45,8 +45,9 @@ The dashboard has nine views, also reachable with Alt+1 … Alt+9:
 | Timeline       | Everything in one chronological list: requests, realtime events, console, navigation, interactions, notifications, server spans                                                                                                                                                     |
 | Tracing        | Server traces as a waterfall, with their links to browser events (section 13)                                                                                                                                                                                                       |
 | Console        | Console errors and warnings, uncaught errors and unhandled rejections                                                                                                                                                                                                               |
-| Storage        | The live site's cookies, local and session storage, IndexedDB, Cache Storage and service workers (section 13)                                                                                                                                                                       |
+| Storage        | The live site's cookies, local and session storage, IndexedDB, Cache Storage and service workers (section 14)                                                                                                                                                                       |
 | Investigations | Findings and the investigation workspace (section 8)                                                                                                                                                                                                                                |
+| Simulation     | Mocks, latency and failures for allowlisted development origins (section 11)                                                                                                                                                                                                        |
 | Settings       | Theme, retention, capture options, integrations, realtime expectations, API contracts, redaction, stored data                                                                                                                                                                       |
 
 The view and its filters are kept in the URL, so a reload or a shared link reopens the same view.
@@ -138,11 +139,14 @@ Single-key shortcuts are ignored while you type in a field. Dialogs keep focus i
 
 If `price` is a number in A and a string in B, you'll see `$.price  type-changed  number → string`. That points to an inconsistency, but check the intended contract before deciding which response is wrong.
 
+You can compare a simulated request with a real one (for example a mocked error with the server's real response). The request picker tags simulated requests, each side names its rule, and the summary adds an **Outcome from** row (`server`, or the rule) with a note that differences may come from the rule rather than the backend.
+
 ### API contract baselines
 
 - **Save as baseline** (request details) stores the shape of a successful JSON response as the baseline for its endpoint. The endpoint key is method + host + path, with id-like segments shown as `:id`.
 - In **Investigations → Compare → API contract baselines**, you can instead paste a **JSON Schema**. The supported keywords are listed on screen; others are ignored.
 - Later 2xx JSON responses for that endpoint are checked. Results appear in request details and Investigations → Findings. An inferred baseline is one example and reports medium confidence. A schema reports high confidence.
+- A simulated request can't be saved as a baseline, and a response a rule produced never produces a contract finding.
 
 ## 8. Investigate errors
 
@@ -169,9 +173,22 @@ HTTP findings:
 | Changed since previous session | Latest request per endpoint vs the previous session of the same origin                          |
 | Console error near failure     | Error event within 5 s after a failed request in the same tab                                   |
 
+**Simulated requests in findings.** Each finding is tagged **backend** (it describes the server: a status, body, timing or lifecycle) or **page behavior** (it describes how the page's code reacted to traffic). Simulated requests are used as follows:
+
+| Findings                                                                                                                                        | Simulated requests                                                                                                                                                                                               |
+| ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Backend, from the response: HTTP 4xx/5xx, authentication, contract and OpenAPI checks, cached responses after a mutation, realtime expectations | Only a delayed request the server actually answered (a status and response headers were recorded). Mocks and simulated failures never count. The finding is marked **delayed by simulation** and names the rule. |
+| Backend, from timing or lifecycle: slow requests, network failures and timeouts, requests that never finished                                   | Never. Added delay is not server latency, and a timeout or cancellation during or after an added delay is not a server failure.                                                                                  |
+| Comparison with the previous session                                                                                                            | Never, on either side.                                                                                                                                                                                           |
+| Page behavior: console errors after a failed request, error responses used as data, repeated requests, hydration                                | Always. When a simulated request is involved, the finding is tagged **simulated**, its title names the rule, and its first limitation says the outcome came from the rule, not the server.                       |
+
+A delay rule marks a request as sent when the delay starts. If the page cancels the request or it times out before the delay is over, it was never sent; Dev Companion tells the two apart from the recorded times and response, not from that mark. The failed-request counts in the Overview, the dashboard header and the popup (they always agree) count failures the server returned: real requests, plus a delayed request whose failing response the server sent (the Overview says how many). Mocks, simulated failures, requests never sent and timeouts or cancellations during or after an added delay are not counted; the Overview shows how many simulated failures were left out. The slow and pending counts use real traffic only. The number of simulated requests is shown separately. Simulated requests still appear in the request list, can be investigated and compared, and are labeled wherever they appear.
+
 Each finding lists what was observed, the evidence (with links to the requests), plausible explanations, next steps, a confidence level and its limitations. Treat these as starting points rather than verdicts. For example, 401 commonly means missing or expired authentication, 403 missing permission, 404 a wrong path or id, 422 validation failure, and 500 a server-side error. A failure with no HTTP status can come from CORS, DNS, being offline, a blocker or cancellation, and the browser hides which one from page scripts. Check the browser console for the reason.
 
 **Investigate an event.** Click **Investigate** on a request, a realtime message or a span, or press `i`. The workspace shows what happened, the related events and how strongly each is linked (shared id, same trace, same connection, by time only), the earliest verified point where things diverged, ranked possible causes, the evidence that is missing (for example "server tracing not configured"), next steps and reproduction steps. For a realtime message, a notification checklist shows which stages were observed and which can't be observed without the page adapter. Nothing in it is invented: a stage that wasn't recorded is marked "Unknown" or "Not instrumented". From the workspace you can save the investigation, create a redacted bug report (Markdown or JSON), or copy a Playwright test draft. Interactions that caused mutating requests are commented out in the draft.
+
+In an investigation, a simulated request is titled "(simulated)", the summary says which rule produced it (or how many related requests were simulated), a failure it caused is marked as not coming from the server (or, for a delayed request the server answered, as the server's), each possible cause says whether its finding is about the backend or the page, and reproduction steps say a mocked mutation never reached the server. A request a rule answered without sending is never linked to server spans or realtime messages. Bug reports add a **Simulated requests** section and mark causes that come from findings about the page reacting to simulated traffic, and the Playwright draft adds a `// SIMULATED:` comment where the recorded status came from a rule.
 
 The **Timeline** view merges requests with console errors and warnings, uncaught errors, unhandled rejections, route changes, page loads, clicks, form submissions and markers. Use the chips to filter, and click a request or a related-request link to open it.
 
@@ -181,6 +198,8 @@ The **Timeline** view merges requests with console errors and warnings, uncaught
 
 - **Dev Companion JSON:** requests, bodies, sessions and, optionally, timeline events. You can import it again.
 - **HAR 1.2:** for other HAR tools. Cookies are not included. Extra Dev Companion fields are under `_devCompanion`.
+
+Simulated requests are exported as recorded, with what happened to them. The JSON export keeps their `simulated` field. HAR has no field for a response no server sent, so a simulated entry gets a standard `response.comment` ("Synthetic: produced by Dev Companion, not returned by a server"; for a delay the server answered, that the response is the server's with time added by the rule; for a delayed request that ended without a response, that none was recorded) and its rule details under `_devCompanion.simulated`. Status, headers and body are kept as the page received them, so a HAR tool that ignores comments and custom fields shows a mocked response like a real one. Importing either format restores the marker.
 
 Redaction rules are applied to every export. Bodies can still contain personal data, so review the file before sharing and use an approved channel.
 
@@ -198,7 +217,51 @@ Redaction rules are applied to every export. Bodies can still contain personal d
 
 The replay is sent from the extension, not the page, so the `Origin` header, cookies, CORS and authentication can differ from the original. Prefer local or staging environments. Nothing is ever replayed automatically.
 
-## 11. Realtime traffic
+## 11. Simulate responses, latency and failures
+
+Test how your frontend handles errors, slow APIs and unfinished endpoints without changing the backend. Rules apply to the page's `fetch` and `XMLHttpRequest` requests, so libraries built on them (Axios, for example) are covered too. Simulation is off by default and runs only on development origins you allowlist.
+
+1. Start recording the tab, then open the workspace from its popup and go to **Simulation** (Alt+0).
+2. Under **Allowlisted origins**, add your development origin (for example `http://localhost:3000`). The list starts empty, and only listed origins can be simulated. Adding an origin does not turn simulation on.
+3. Click **New rule**, describe the requests it matches and what should happen, and click **Create rule**.
+4. Click **Turn simulation on**. The status table shows whether **this tab** receives the rules. If it doesn't, the view lists why: the switch is off, the origin isn't allowlisted, the tab isn't recording or is paused, or no rule is enabled.
+5. Reload the page if requests made during page load should be simulated too.
+
+While simulation is active on a tab, the popup says so and links to the Simulation view.
+
+| Field            | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| URL pattern      | `localhost:3000/api/orders/:id` (host and path), `http://localhost:3000/api/*` (scheme, host and path) or `/api/orders` (a path on any host). `:name` matches one path segment, `*` matches anything. A trailing `/` is ignored.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Query parameters | `?status=open&page=*` in the pattern requires those parameters (`*` = any value). Choose whether other parameters are allowed or the query must contain exactly those.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Methods          | Comma-separated, for example `GET, POST`. Empty matches any method.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| What happens     | **Mock a response** (status 200–599, status text, headers, a JSON or text body up to 1 MB; the request never reaches the server), **Delay, then send the real request**, **Network error**, **Timeout** after a set time, or **Hang** (never responds; the request ends only when the page aborts it or its own timeout fires).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Delay            | Waited before the outcome, up to 120 s.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| When it applies  | Every matching request, a random percentage, the first N matching requests and then pass through (useful for retries), or every Nth. Counts are kept per page load and restart when the rule is saved.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Enabled          | Disabled rules are kept but never applied.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Auth/payment     | Authentication and payment requests are never simulated unless the rule ticks **Allow this rule to simulate authentication and payment endpoints**. The editor warns when a pattern targets them. Detection looks at the request's host and path: a host named for it (`login.example.com`, `auth.…`, `sso.…`, `api.stripe.com`, `checkout.…`); a segment such as `login`, `token`, `oauth`, `session`, `checkout` or `payment`; unambiguous words inside names written with `-`, `_` or camelCase (`oauth-callback`, `resetPassword`, `payment_methods`); and phrases such as "refresh token", "verify email", "account recovery", "credit card" or "place order". Ambiguous words (`pay`, `card`, `token`, `session`, `verify`) count only as a whole segment or in such a phrase, so `/blog/how-to-pay` or `/api/token-usage` stay simulatable. |
+
+**Priority:** rules are checked from top to bottom, and the first enabled rule that matches decides. Use the arrows in the list to change the order. Rules can be edited, disabled or deleted (after a confirmation) at any time. If the same rule was changed in another window, saving reports it and shows the latest version instead of overwriting it.
+
+**Is it running?** The Simulation view shows **Active on this tab** only after the tab's page confirms that it applies exactly the current rules. Until then it says what it knows: **Saved, not sent to this tab yet**, **Sent to this tab, not confirmed yet** (it waits up to 5 seconds), **Not confirmed by this tab** (the page did not confirm; reload it) or **Page not connected** (no Dev Companion connection in the page; reload it). Only the page currently loaded in the tab can confirm, and only for the current rules: a reloaded page has to confirm again. The popup's warning says whether the page confirmed.
+
+**How long a request can be held:** a page simulates with a 60-second lease that the extension renews every 20 seconds (after a failed renewal it keeps trying). When the lease runs out without renewal (the extension cannot be reached), the page stops simulating and sends every request it was holding, unchanged, as **Turn simulation off** does; such requests are recorded with a note. So a held request is never held more than 60 seconds after the last successful renewal, and a delay never more than 120 seconds. A request the page aborts or times out while it is held is never sent afterwards.
+
+**The switch:** **Turn simulation off** stops simulation in open pages at once. Requests a rule was holding (a delay or a hang) are sent unchanged, and the rules are kept. The switch also turns itself off when the browser restarts or the extension is reloaded. Pausing recording pauses simulation, and stopping recording ends it.
+
+**What is recorded:** simulated requests appear in the Network list and the Timeline like any other, tagged **simulated**, or **delayed by simulation** when the server's response was recorded after an added delay. The **Simulated** filter in the request list (shown in sessions with simulated requests) narrows the list to them and combines with search and the other filters; in the Timeline, search for `simulated` (or `delayed by simulation`). Their details name the rule, whether the request reached the network and where the outcome came from. Backend findings use only responses the server actually returned and never their timing; findings about how the page reacted include them, tagged **simulated**. They are never baselines or counted in backend statistics, and can be investigated, compared and exported (see sections 7–9).
+
+**Not affected:** Replay and the Request playground (they are sent from the extension, not the page), navigations and form posts, `sendBeacon`, WebSocket and EventSource, and requests made in iframes or workers.
+
+**How simulated responses differ from real ones:**
+
+- A mocked `fetch` response is never redirected and its `type` is `default`.
+- XHR events are dispatched by Dev Companion, so `event.isTrusted` is `false`. A mocked response is delivered in one step, without `upload` events. `responseType = 'document'` gives `null`.
+- While a rule holds an XHR request, changing `xhr.timeout` has no effect and setting `withCredentials` doesn't throw (a real in-flight request would).
+- `Set-Cookie` headers in a mock are not exposed to the page and set no cookie.
+- A simulated network error looks like any failed request (a `TypeError` from `fetch`, an `error` event from XHR). A specific CORS or DNS failure can't be simulated.
+- Auth/payment protection is a safety heuristic over host and path names, not a guarantee: it can miss endpoints named differently, endpoints chosen by a query parameter (`/index.php?action=login`) and GraphQL operations, and it never looks at bodies or headers. Check your app's sign-in and checkout paths before writing broad rules.
+
+## 12. Realtime traffic
 
 WebSocket and EventSource traffic is recorded while recording is on (Settings → Capture → "Record WebSocket and EventSource traffic"). The **Realtime** view lists connections with their transport, protocol, state, close code and reconnect attempt (`#2`, `#3`, …). Select one to see its messages:
 
@@ -228,7 +291,7 @@ Some stages can't be observed from outside the app, such as "the handler for thi
 
 Nothing of this runs on other origins. Changes apply from the next page load.
 
-## 12. Server-side rendering and API traces
+## 13. Server-side rendering and API traces
 
 If your app is a Node server (tested with Next.js 16), the development-only [server tracer](../packages/server-tracer/README.md) records what the server did for each request: render phases, route handlers, and outbound `fetch` / `node:http` calls with their status, timing and (redacted) bodies. Setup takes a few minutes and is described in the tracer's README. The [example app](../examples/next-ssr/README.md) shows it end to end.
 
@@ -236,7 +299,7 @@ Once configured (Settings → Integrations → Server tracing), the **Tracing** 
 
 Server tracing only works with `next dev` (it is off in production builds), so statically generated and ISR pages are not traced.
 
-## 13. Recording controls and storage
+## 14. Recording controls and storage
 
 - **Pause / Resume:** keeps the session but stores nothing while paused.
 - **Stop:** the popup, dashboard header or DevTools panel. New events stop being stored immediately. Stopping does **not** delete anything.
@@ -251,7 +314,7 @@ Server tracing only works with `next dev` (it is off in production builds), so s
 
 The oldest requests are removed automatically when a retention limit is exceeded.
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 **No requests appear.** Check that recording is on (REC badge) for this tab and origin. Reload the page after starting. Verify the site access was granted (`chrome://extensions` → Dev Companion → Details → Site access). Only fetch, XHR and beacon requests are captured. Check the service worker console (`chrome://extensions` → Service worker → Inspect).
 
@@ -271,7 +334,7 @@ The oldest requests are removed automatically when a retention limit is exceeded
 
 **Capture stopped after updating the extension.** Reload the debugged page; content scripts from the previous extension version disconnect.
 
-## 15. Security guidelines
+## 16. Security guidelines
 
 - Record only the sites you are debugging; access is granted per host.
 - Review redaction rules (Settings) before exporting, and add rules for your app's own secret fields.
@@ -280,7 +343,7 @@ The oldest requests are removed automatically when a retention limit is exceeded
 - Clear recordings that contain sensitive data when you no longer need them.
 - Extension storage is not a secrets manager. See [SECURITY.md](SECURITY.md).
 
-## 16. Known limitations
+## 17. Known limitations
 
 - Captured: page `fetch`, XHR, `sendBeacon`, WebSocket and EventSource in the top frame's main thread. **Not** captured: iframes, Web Workers and service workers (including their sockets), navigations and form posts (advanced capture adds the document response), static resources, and browser-generated traffic.
 - Requests made before recording started, or from a page loaded before recording started, are not captured.
@@ -294,7 +357,7 @@ The oldest requests are removed automatically when a retention limit is exceeded
 - A request is stored only after the recorder observes it. If the page unloads while the response body is still being read, the entry can end up `incomplete` or without a body.
 - Correlation and diagnosis are time- and rule-based, not causal. Verify important findings against backend logs and other tools.
 
-## 17. Recommended workflow
+## 18. Recommended workflow
 
 1. Start recording (and reload if the bug involves page load).
 2. Add a marker, then reproduce the issue.

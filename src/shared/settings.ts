@@ -5,6 +5,8 @@ import type {
   ServerIntegration,
   Settings,
 } from './types';
+import { DISARMED, pageSimulationConfig } from './simulation';
+import type { SimulationState } from './simulation';
 
 export const REDACTED = '[REDACTED]';
 
@@ -71,6 +73,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ],
   serverIntegrations: [],
   realtimeExpectations: [],
+  simulationOrigins: [],
 };
 
 const clampInt = (value: unknown, min: number, max: number, fallback: number): number => {
@@ -196,10 +199,23 @@ export function normalizeSettings(raw: unknown): Settings {
       .slice(0, 20),
     serverIntegrations: integrations(r.serverIntegrations),
     realtimeExpectations: expectations(r.realtimeExpectations),
+    simulationOrigins: [
+      ...new Set(
+        stringList(r.simulationOrigins, d.simulationOrigins)
+          .map(normalizeOrigin)
+          .filter((o): o is string => !!o),
+      ),
+    ],
   };
 }
 
-export function captureConfigFrom(settings: Settings, enabled: boolean, origin?: string): CaptureConfig {
+export function captureConfigFrom(
+  settings: Settings,
+  enabled: boolean,
+  origin?: string,
+  simulation: SimulationState = DISARMED,
+  now = Date.now(),
+): CaptureConfig {
   return {
     enabled,
     maxBodyBytes: settings.maxBodyKB * 1024,
@@ -212,6 +228,7 @@ export function captureConfigFrom(settings: Settings, enabled: boolean, origin?:
     captureFetchStreams: settings.captureFetchStreams,
     appAdapters: !!origin && settings.appAdapterOrigins.includes(origin),
     notificationSelectors: settings.notificationSelectors,
+    simulation: pageSimulationConfig(settings, enabled, origin, simulation, now),
   };
 }
 

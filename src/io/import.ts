@@ -94,6 +94,8 @@ function harEntryToDraft(raw: unknown): unknown {
     warnings: ['Imported from HAR'],
     requestBody,
     responseBody,
+    // Dev Companion's own HAR keeps the simulation marker; sanitized like any draft field.
+    simulated: ext.simulated,
   };
 }
 

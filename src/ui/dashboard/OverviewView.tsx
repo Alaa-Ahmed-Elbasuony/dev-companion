@@ -2,7 +2,12 @@
 // connections healthy, is server tracing available, and what to look at next.
 // Unavailable sources are shown as unavailable, never as zero.
 import { useMemo } from 'react';
-import { isFailure } from '../../analysis/filter';
+import {
+  isBackendFailure,
+  isSimulated,
+  isSimulatedFailure,
+  realTraffic,
+} from '../../analysis/simulated-traffic';
 import { formatBytes } from '../../shared/util';
 import { Badge, EmptyState, LevelBadge, MetricTile } from '../components/ui';
 import { integrationFlags } from '../lib/analysis';
@@ -12,9 +17,16 @@ export function OverviewView(props: ViewProps) {
   const { data, settings, analysis, navigate } = props;
   const flags = integrationFlags(data, settings);
   const stats = useMemo(() => {
-    const failed = data.entries.filter(isFailure).length;
-    const slow = data.entries.filter((e) => (e.duration ?? 0) >= settings.slowRequestMs).length;
-    const pending = data.entries.filter((e) => e.state === 'pending').length;
+    // Backend statistics: failures the server returned (a delayed request's real 500
+    // included); timing and pending counts use real traffic only. Simulated requests
+    // are reported on their own.
+    const real = realTraffic(data.entries);
+    const simulated = data.entries.length - real.length;
+    const failed = data.entries.filter(isBackendFailure).length;
+    const delayedFailed = data.entries.filter((e) => isSimulated(e) && isBackendFailure(e)).length;
+    const slow = real.filter((e) => (e.duration ?? 0) >= settings.slowRequestMs).length;
+    const pending = real.filter((e) => e.state === 'pending').length;
+    const simulatedFailed = data.entries.filter(isSimulatedFailure).length;
     const open = data.connections.filter((c) => c.state === 'open').length;
     const reconnecting = data.connections.filter((c) => c.state === 'reconnecting').length;
     const badConns = data.connections.filter(
@@ -27,7 +39,20 @@ export function OverviewView(props: ViewProps) {
       (s) => s.status === 'error' || (s.outbound && (s.httpStatus ?? 0) >= 400) || (s.httpStatus ?? 0) >= 500,
     ).length;
     const captureGaps = data.timeline.filter((t) => t.kind === 'capture');
-    return { failed, slow, pending, open, reconnecting, badConns, errors, spanErrors, captureGaps };
+    return {
+      failed,
+      slow,
+      pending,
+      simulated,
+      simulatedFailed,
+      delayedFailed,
+      open,
+      reconnecting,
+      badConns,
+      errors,
+      spanErrors,
+      captureGaps,
+    };
   }, [data, settings.slowRequestMs]);
 
   const integration = settings.serverIntegrations.find(
@@ -73,23 +98,42 @@ export function OverviewView(props: ViewProps) {
                   : 'not recording this session'
             }
           />
-          <MetricTile label="Requests" value={data.entries.length} onClick={() => navigate('network')} />
+          <MetricTile
+            label="Requests"
+            value={data.entries.length}
+            hint={stats.simulated ? `including ${stats.simulated} simulated` : undefined}
+            onClick={() => navigate('network')}
+          />
           <MetricTile
             label="Failed requests"
             value={stats.failed}
             tone={stats.failed ? 'error' : 'ok'}
+            hint={
+              [
+                stats.delayedFailed
+                  ? `including ${stats.delayedFailed} returned by the server behind a simulated delay`
+                  : '',
+                stats.simulatedFailed
+                  ? `not counting ${stats.simulatedFailed} simulated failure(s), still in the list`
+                  : '',
+              ]
+                .filter(Boolean)
+                .join('; ') || undefined
+            }
             onClick={() => navigate('network', { preset: 'failed' })}
           />
           <MetricTile
             label={`Slow (≥ ${settings.slowRequestMs} ms)`}
             value={stats.slow}
             tone={stats.slow ? 'warning' : 'ok'}
+            hint={stats.simulated ? 'real traffic only' : undefined}
             onClick={() => navigate('network', { preset: 'slow' })}
           />
           <MetricTile
             label="Pending"
             value={stats.pending}
             tone={stats.pending ? 'info' : 'muted'}
+            hint={stats.simulated ? 'real traffic only' : undefined}
             onClick={() => navigate('network', { preset: 'pending' })}
           />
           <MetricTile

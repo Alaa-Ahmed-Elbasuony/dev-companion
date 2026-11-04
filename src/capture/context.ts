@@ -1,4 +1,5 @@
 import type { PageMessage } from '../shared/messages';
+import type { SimulationAck } from '../shared/simulation';
 import type { CaptureConfig, HeaderPair } from '../shared/types';
 import { clip } from '../shared/util';
 
@@ -10,8 +11,21 @@ export interface RecorderContext {
   /** Subscribes to configuration updates from the bridge. */
   onConfig?: (listener: (config: CaptureConfig) => void) => void;
   pageUrl: () => string;
+  /** What relative request URLs resolve against (document.baseURI); pageUrl when absent. */
+  baseUrl?: () => string;
   now: () => number;
   newId: () => string;
+  /**
+   * Loaded by the armed recorder build: simulation may be active for this origin,
+   * so requests issued before the first configuration should wait for the rules.
+   */
+  simulationArmed?: boolean;
+  /** Resolves when the bridge has delivered the first configuration. */
+  whenConfigured?: () => Promise<void>;
+  /** Random source for probabilistic simulation rules (Math.random by default). */
+  random?: () => number;
+  /** Reports the simulation the page applies after each configuration (to the bridge). */
+  acknowledgeSimulation?: (ack: SimulationAck) => void;
 }
 
 /**
@@ -25,6 +39,15 @@ export function monotonicClock(now: () => number): () => number {
     last = t > last ? t : last + 0.001;
     return last;
   };
+}
+
+/** A request URL as the browser resolves it: against the document base URL (`<base href>`). */
+export function resolveRequestUrl(ctx: RecorderContext, raw: string): string {
+  try {
+    return new URL(raw, (ctx.baseUrl ?? ctx.pageUrl)()).href;
+  } catch {
+    return raw;
+  }
 }
 
 export function headersToPairs(headers: Headers | undefined | null): HeaderPair[] {

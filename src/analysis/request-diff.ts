@@ -1,4 +1,5 @@
 // Structural comparison of two captured requests/responses.
+import type { SimulatedInfo } from '../shared/simulation';
 import type { CapturedBody, EntryBodies, HeaderPair, NetworkEntry } from '../shared/types';
 import { tryParseJson } from '../shared/util';
 
@@ -146,6 +147,11 @@ export interface EntryComparison {
   method: { a: string; b: string; same: boolean };
   url: { a: string; b: string; same: boolean };
   duration: { a?: number; b?: number; deltaMs?: number };
+  /**
+   * Simulation marker of each side. A comparison may deliberately pair a simulated
+   * request with a real one; `mixed` says the two outcomes have different origins.
+   */
+  simulated: { a?: SimulatedInfo; b?: SimulatedInfo; mixed: boolean };
   requestHeaders: HeaderDiff;
   responseHeaders: HeaderDiff;
   requestBody: BodyDiff;
@@ -168,6 +174,7 @@ export function compareEntries(
       b: b.duration,
       deltaMs: a.duration !== undefined && b.duration !== undefined ? b.duration - a.duration : undefined,
     },
+    simulated: { a: a.simulated, b: b.simulated, mixed: !!a.simulated !== !!b.simulated },
     requestHeaders: diffHeaders(a.requestHeaders, b.requestHeaders),
     responseHeaders: diffHeaders(a.responseHeaders, b.responseHeaders),
     requestBody: diffBodies(aBodies?.request, bBodies?.request),

@@ -21,6 +21,7 @@ import type {
   TimelineDraft,
   TimelineKind,
 } from './types';
+import { sanitizeSimulatedInfo } from './simulation';
 import { clip, truncateText } from './util';
 
 const BODY_KINDS: readonly BodyKind[] = ['none', 'text', 'json', 'form', 'binary', 'stream', 'unreadable'];
@@ -117,6 +118,7 @@ export function sanitizeDraft(v: unknown, maxBodyBytes: number): NetworkDraft | 
       : [],
     requestBody: sanitizeBody(v.requestBody, maxBodyBytes),
     responseBody: sanitizeBody(v.responseBody, maxBodyBytes),
+    simulated: sanitizeSimulatedInfo(v.simulated),
   };
 }
 

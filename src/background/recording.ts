@@ -2,13 +2,16 @@
 // origins, injection into already-open pages and the toolbar badge.
 import type { StartResult } from '../shared/messages';
 import { captureConfigFrom } from '../shared/settings';
+import { DISARMED, isArmedOrigin } from '../shared/simulation';
+import { recordSimulationSent } from './simulation';
+import type { SimulationState } from '../shared/simulation';
 import type { RecordingState, Session, Settings } from '../shared/types';
 import { createId } from '../shared/util';
 import type { EntryStore } from '../storage/database';
 import { checkRecordableUrl, originToPattern } from './url-policy';
 
 const STATE_KEY = 'recordingTabs';
-const SCRIPT_IDS = { main: 'dc-main-world', bridge: 'dc-bridge' } as const;
+const SCRIPT_IDS = { main: 'dc-main-world', armed: 'dc-main-world-armed', bridge: 'dc-bridge' } as const;
 
 type StateMap = Record<string, RecordingState>;
 
@@ -17,6 +20,7 @@ export class RecordingController {
     private readonly store: EntryStore,
     private readonly settings: () => Promise<Settings>,
     private readonly broadcast: () => void,
+    private readonly simulation: () => Promise<SimulationState> = async () => DISARMED,
   ) {}
 
   async loadState(): Promise<StateMap> {
@@ -132,26 +136,56 @@ export class RecordingController {
     this.broadcast();
   }
 
-  /** Registers the recorder for every origin that has an active recording. */
+  /**
+   * Registers the recorder for every origin that has an active recording. Origins
+   * where simulation is armed (and the recording is not paused) get the armed
+   * build instead, which holds startup requests until the rules have arrived.
+   * Match patterns have no port, so the armed build covers every port of the
+   * host; the worker still sends rules only to allowlisted origins.
+   */
   async syncRegistration(state?: StateMap): Promise<void> {
-    const current = state ?? (await this.loadState());
-    const patterns = [...new Set(Object.values(current).map((r) => originToPattern(r.origin)))];
+    const current = Object.values(state ?? (await this.loadState()));
+    const patterns = [...new Set(current.map((r) => originToPattern(r.origin)))];
+    const settings = await this.settings();
+    const simulation = await this.simulation();
+    const armed = [
+      ...new Set(
+        current
+          .filter((r) => !r.paused && isArmedOrigin(settings, simulation, r.origin))
+          .map((r) => originToPattern(r.origin)),
+      ),
+    ];
+    const desired: Record<string, string[]> = {
+      [SCRIPT_IDS.main]: patterns.filter((p) => !armed.includes(p)),
+      [SCRIPT_IDS.armed]: armed,
+      [SCRIPT_IDS.bridge]: patterns,
+    };
     const existing = await chrome.scripting.getRegisteredContentScripts({
-      ids: [SCRIPT_IDS.main, SCRIPT_IDS.bridge],
+      ids: Object.values(SCRIPT_IDS),
     });
     const key = (list: readonly string[] | undefined) => [...(list ?? [])].sort().join('\n');
-    const unchanged =
-      existing.length === 2 && existing.every((s) => key(s.matches) === key(patterns)) && patterns.length > 0;
+    const unchanged = Object.values(SCRIPT_IDS).every(
+      (id) => key(existing.find((s) => s.id === id)?.matches) === key(desired[id]),
+    );
     if (unchanged) return;
     if (existing.length) {
       await chrome.scripting.unregisterContentScripts({ ids: existing.map((s) => s.id) });
     }
     if (!patterns.length) return;
-    await chrome.scripting.registerContentScripts([
+    const scripts: chrome.scripting.RegisteredContentScript[] = [
       {
         id: SCRIPT_IDS.main,
         js: ['main-world.js'],
-        matches: patterns,
+        matches: desired[SCRIPT_IDS.main],
+        runAt: 'document_start',
+        world: 'MAIN',
+        allFrames: false,
+        persistAcrossSessions: false,
+      },
+      {
+        id: SCRIPT_IDS.armed,
+        js: ['main-world-armed.js'],
+        matches: armed,
         runAt: 'document_start',
         world: 'MAIN',
         allFrames: false,
@@ -165,7 +199,15 @@ export class RecordingController {
         allFrames: false,
         persistAcrossSessions: false,
       },
-    ]);
+    ];
+    // Chrome rejects a registration without match patterns.
+    await chrome.scripting.registerContentScripts(scripts.filter((s) => s.matches?.length));
+  }
+
+  /** Re-applies registration and page configs after the master switch, rules or allowlist changed. */
+  async applySimulationChange(): Promise<void> {
+    await this.syncRegistration();
+    await this.notifyAllRecordingTabs();
   }
 
   /** Injects into the already-loaded document so recording starts without a reload. */
@@ -192,12 +234,13 @@ export class RecordingController {
   async notifyTab(tabId: number, recording: boolean): Promise<void> {
     const rec = recording ? await this.get(tabId) : null;
     const enabled = recording && !rec?.paused;
-    const config = captureConfigFrom(await this.settings(), enabled, rec?.origin);
+    const config = captureConfigFrom(await this.settings(), enabled, rec?.origin, await this.simulation());
     try {
       await chrome.tabs.sendMessage(tabId, { type: 'recording-state', recording: enabled, config });
     } catch {
-      /* no bridge in this tab (yet) */
+      return; /* no bridge in this tab (yet) */
     }
+    await recordSimulationSent(tabId, config.simulation?.revision).catch(() => undefined);
   }
 
   async notifyAllRecordingTabs(): Promise<void> {
@@ -228,6 +271,9 @@ export class RecordingController {
         ? 'Recording paused (nothing is captured until resumed)'
         : 'Recording resumed (events while paused were not captured)',
     });
+    // Pausing also pauses simulation: the page config drops the rules and the
+    // origin goes back to the plain recorder until recording resumes.
+    await this.syncRegistration(state);
     await this.notifyTab(tabId, true);
     await this.setBadge(tabId, true, paused);
     this.broadcast();

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { isFailure } from '../../analysis/filter';
+import { isBackendFailure, isSimulated } from '../../analysis/simulated-traffic';
 import type { AdvancedCaptureResult } from '../../shared/messages';
 import type { InvestigationAnchor, NetworkEntry, Session } from '../../shared/types';
 import { formatBytes, formatDuration } from '../../shared/util';
@@ -28,6 +28,7 @@ import { RealtimeView } from './RealtimeView';
 import { ReplayDialog } from './ReplayDialog';
 import { RequestPlayground } from './RequestPlayground';
 import { SettingsView } from './SettingsView';
+import { SimulationView } from './SimulationView';
 import { StorageView } from './StorageView';
 import { TimelineView } from './TimelineView';
 import { TracingView } from './TracingView';
@@ -66,13 +67,9 @@ export function App() {
   const [sessionId, setSessionId] = useState<string>(params.get('session') ?? '');
   const { route, navigate, setParams } = useRoute(embeddedTabId !== undefined ? 'network' : 'overview');
   const data = useSessionData(sessionId, embeddedTabId, version, reloadKey);
-  const messages = useSessionMessages(data.sessionId, !data.loading && route.view !== 'settings', version);
-  const analysis = useAnalysis(
-    data,
-    settings,
-    messages,
-    route.view !== 'settings' && route.view !== 'realtime',
-  );
+  const configView = route.view === 'settings' || route.view === 'simulation';
+  const messages = useSessionMessages(data.sessionId, !data.loading && !configView, version);
+  const analysis = useAnalysis(data, settings, messages, !configView && route.view !== 'realtime');
   const [compareIds, setCompareIds] = useState<{ a?: string; b?: string }>({});
   const [replayEntry, setReplayEntry] = useState<NetworkEntry | null>(null);
   const [playgroundEntry, setPlaygroundEntry] = useState<NetworkEntry | null>(null);
@@ -354,7 +351,9 @@ export function App() {
 
   if (!settings || !viewProps) return <div className="app-loading">Loading…</div>;
 
-  const failed = data.entries.filter(isFailure).length;
+  // Failures the backend returned; simulated requests are counted separately.
+  const failed = data.entries.filter(isBackendFailure).length;
+  const simulated = data.entries.filter(isSimulated).length;
   const stateLabel = rec ? (rec.paused ? 'PAUSED' : 'REC') : null;
 
   return (
@@ -434,6 +433,12 @@ export function App() {
           <span className="counts">
             <strong>{data.entries.length}</strong> requests ·{' '}
             <strong className={failed ? 'text-error' : ''}>{failed}</strong> failed
+            {simulated > 0 && (
+              <span title="Produced or altered by simulation rules; counted as failed only when the server returned the failure">
+                {' '}
+                · <strong>{simulated}</strong> simulated
+              </span>
+            )}
             {data.connections.length > 0 && (
               <>
                 {' '}
@@ -576,6 +581,8 @@ export function App() {
             setCompareIds={setCompareIds}
             contracts={data.contracts}
           />
+        ) : route.view === 'simulation' ? (
+          <SimulationView tabId={targetTabId} version={version} />
         ) : (
           <SettingsView
             settings={settings}

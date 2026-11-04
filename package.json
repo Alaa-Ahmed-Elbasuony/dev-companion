@@ -16,11 +16,12 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "npm run build:e2e && node tests/e2e/run-e2e.mjs && node tests/e2e/run-e2e-realtime.mjs && node tests/e2e/run-e2e-cdp.mjs && node tests/e2e/run-e2e-ssr.mjs",
+    "test:e2e": "npm run build:e2e && node tests/e2e/run-e2e.mjs && node tests/e2e/run-e2e-realtime.mjs && node tests/e2e/run-e2e-cdp.mjs && node tests/e2e/run-e2e-ssr.mjs && node tests/e2e/run-e2e-simulation.mjs",
     "mock-server": "node test-page/mock-server.mjs",
     "check": "npm run typecheck && npm run lint && npm run test && npm run build",
     "test:e2e:realtime": "npm run build:e2e && node tests/e2e/run-e2e-realtime.mjs",
-    "test:e2e:ssr": "npm run build:e2e && node tests/e2e/run-e2e-ssr.mjs"
+    "test:e2e:ssr": "npm run build:e2e && node tests/e2e/run-e2e-ssr.mjs",
+    "test:e2e:simulation": "npm run build:e2e && node tests/e2e/run-e2e-simulation.mjs"
   },
   "dependencies": {
     "idb": "^8.0.4",
@@ -38,6 +39,7 @@
     "@types/react-dom": "^19.3.0",
     "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^6.1.2",
+    "axios": "^1.21.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.13.0",
     "eslint-plugin-react-hooks": "^7.1.1",

@@ -15,6 +15,7 @@ import { compareToShape, inferShape, validateJsonSchema } from './contracts';
 import type { Shape } from './contracts';
 import { correlate, ERROR_KINDS } from './correlate';
 import { statusClass } from './filter';
+import { analysisInputs, labelFindings } from './simulated-traffic';
 
 export type Confidence = 'low' | 'medium' | 'high';
 
@@ -69,6 +70,13 @@ export interface Finding {
   missingEvidence?: string[];
   /** Non-request evidence (realtime messages, connections, timeline events, spans). */
   refs?: { type: 'timeline' | 'rt-message' | 'rt-connection' | 'span'; id: string }[];
+  /** Whether the finding describes the backend or the page's own behavior (see FINDING_BASIS). */
+  basis?: 'backend' | 'frontend';
+  /**
+   * Set when requests in the finding were simulated. `outcomeFromServer`: every one
+   * was sent and answered by the server (only the timing was changed).
+   */
+  simulation?: { entryIds: string[]; ruleNames: string[]; outcomeFromServer: boolean };
 }
 
 export type EvidenceLevel = 'confirmed' | 'strong' | 'possible' | 'insufficient';
@@ -580,14 +588,19 @@ function consoleNearFailureFindings(input: DetectorInput): Finding[] {
 
 const SEVERITY_ORDER = { error: 0, warning: 1, info: 2 } as const;
 
+/** Each rule sees the simulated requests its kind of finding may use (see simulated-traffic.ts). */
 export function detectIssues(input: DetectorInput): Finding[] {
-  return [
-    ...httpErrorFindings(input),
-    ...networkFailureFindings(input),
-    ...contractFindings(input),
-    ...consoleNearFailureFindings(input),
-    ...repeatedFindings(input),
-    ...slowFindings(input),
-    ...sessionDiffFindings(input),
-  ].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+  const { real, responses, all } = analysisInputs(input);
+  return labelFindings(
+    [
+      ...httpErrorFindings(responses),
+      ...networkFailureFindings(real),
+      ...contractFindings(responses),
+      ...consoleNearFailureFindings(all),
+      ...repeatedFindings(all),
+      ...slowFindings(real),
+      ...sessionDiffFindings(real),
+    ],
+    input.entries,
+  ).sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 }

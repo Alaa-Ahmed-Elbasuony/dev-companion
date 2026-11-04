@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { isFailure } from '../../analysis/filter';
+import { isBackendFailure, isSimulated } from '../../analysis/simulated-traffic';
 import { checkRecordableUrl } from '../../background/url-policy';
-import type { AdvancedCaptureResult } from '../../shared/messages';
+import type { AdvancedCaptureResult, SimulationStateResponse } from '../../shared/messages';
 import type { RecordingState } from '../../shared/types';
 import { Notice } from '../components/common';
 import { getStore, getTabState, requestPermissionAndStart, sendToWorker } from '../lib/extension';
 import { UpdateBanner } from '../components/UpdateBanner';
 import { useDataVersion } from '../lib/hooks';
 import { useUpdateStatus } from '../lib/updates';
+
+const pluralRules = (n: number) => `${n} rule${n === 1 ? '' : 's'}`;
 
 interface TabInfo {
   id: number;
@@ -17,11 +19,18 @@ interface TabInfo {
 export function Popup() {
   const [tab, setTab] = useState<TabInfo | null>(null);
   const [recording, setRecording] = useState<RecordingState | null>(null);
-  const [counts, setCounts] = useState({ total: 0, failed: 0, connections: 0, openConnections: 0 });
+  const [counts, setCounts] = useState({
+    total: 0,
+    failed: 0,
+    simulated: 0,
+    connections: 0,
+    openConnections: 0,
+  });
   const [message, setMessage] = useState<{ kind: 'error' | 'info' | 'warning'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [justStarted, setJustStarted] = useState(false);
   const [marker, setMarker] = useState('');
+  const [simulation, setSimulation] = useState<SimulationStateResponse | null>(null);
   const version = useDataVersion();
   const update = useUpdateStatus();
 
@@ -35,13 +44,18 @@ export function Popup() {
     if (!tab) return;
     const state = await getTabState(tab.id);
     setRecording(state.recording);
+    void sendToWorker<SimulationStateResponse>({ type: 'get-simulation-state', tabId: tab.id }).then(
+      setSimulation,
+      () => setSimulation(null),
+    );
     if (state.recording) {
       const store = await getStore();
       const entries = await store.listEntries({ sessionId: state.recording.sessionId });
       const connections = await store.listConnections({ sessionId: state.recording.sessionId });
       setCounts({
         total: entries.length,
-        failed: entries.filter(isFailure).length,
+        failed: entries.filter(isBackendFailure).length,
+        simulated: entries.filter(isSimulated).length,
         connections: connections.length,
         openConnections: connections.filter((c) => c.state === 'open').length,
       });
@@ -193,6 +207,11 @@ export function Popup() {
                 >
                   <strong>{counts.failed}</strong> failed
                 </button>
+                {counts.simulated > 0 && (
+                  <span title="Produced or altered by simulation rules; counted as failed only when the server returned the failure">
+                    <strong>{counts.simulated}</strong> simulated
+                  </span>
+                )}
                 {counts.connections > 0 && (
                   <button
                     type="button"
@@ -229,6 +248,17 @@ export function Popup() {
                   Stop recording
                 </button>
               </div>
+              {simulation?.page?.active && (
+                <Notice kind="warning">
+                  {simulation.page.delivery === 'acknowledged'
+                    ? 'Simulation is active: '
+                    : 'Simulation is on for this tab, but the page has not confirmed it yet: '}
+                  {pluralRules(simulation.enabledRules)} can change fetch and XHR responses on this tab.{' '}
+                  <button type="button" className="link" onClick={() => openExplorer('#simulation')}>
+                    Manage
+                  </button>
+                </Notice>
+              )}
               <label
                 className="check small"
                 title="chrome.debugger: sees all SSE event types and document headers; Chrome shows a debugging banner"

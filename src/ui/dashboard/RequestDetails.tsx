@@ -4,6 +4,7 @@ import type { ContractIssue, Shape } from '../../analysis/contracts';
 import { curlForEntry, fetchForEntry } from '../../analysis/curl';
 import { validateEntryAgainstOpenApi } from '../../analysis/openapi';
 import { redactEntry } from '../../analysis/redaction';
+import { describeSimulated, responseOrigin, serverResponded } from '../../analysis/simulated-traffic';
 import type { EventRef } from '../../analysis/trace-correlate';
 import type { EntryBodies, NetworkEntry } from '../../shared/types';
 import {
@@ -101,8 +102,13 @@ export function RequestDetails({
         : { ok: false as const },
     [bodies],
   );
+  // A baseline describes the real API: never inferred from a response a rule produced or altered.
   const canBaseline =
-    responseJson.ok && entry.status !== undefined && entry.status >= 200 && entry.status < 300;
+    !entry.simulated &&
+    responseJson.ok &&
+    entry.status !== undefined &&
+    entry.status >= 200 &&
+    entry.status < 300;
 
   const contractIssues: ContractIssue[] | null = useMemo(() => {
     if (!contract || !responseJson.ok || contract.sourceEntryId === entry.id) return null;
@@ -340,7 +346,9 @@ export function RequestDetails({
           title={
             canBaseline
               ? `Use this response shape as the baseline for ${key}`
-              : 'Needs a complete 2xx JSON response'
+              : entry.simulated
+                ? 'A simulated request cannot be a baseline of the real API'
+                : 'Needs a complete 2xx JSON response'
           }
         >
           Save as baseline
@@ -366,6 +374,15 @@ export function RequestDetails({
         )}
       </div>
 
+      {entry.simulated && (
+        <Notice kind="info">
+          <strong>{describeSimulated(entry.simulated, entry)}.</strong> Outcome from:{' '}
+          {responseOrigin(entry.simulated, entry)}.{' '}
+          {serverResponded(entry)
+            ? 'Backend findings use its response but not its timing; it is never a baseline or counted in backend statistics.'
+            : 'Left out of backend findings, baselines and statistics; findings about how the page reacted to it are kept and tagged simulated.'}
+        </Notice>
+      )}
       {entry.warnings.length > 0 && (
         <Notice kind="warning">
           <ul className="plain">

@@ -84,8 +84,18 @@ const scriptBuilds = [
   { entry: 'src/background/service-worker.ts', out: 'service-worker.js', format: 'esm' },
   { entry: 'src/content/content-script.ts', out: 'content-script.js', format: 'iife' },
   { entry: 'src/capture/main-world.ts', out: 'main-world.js', format: 'iife', plugins: [ignoreListPlugin] },
-].map(({ entry, out, format, plugins = [] }) => ({
+  // Same recorder, registered instead of main-world.js for origins where simulation is
+  // armed: it holds startup requests until the simulation rules have arrived.
+  {
+    entry: 'src/capture/main-world.ts',
+    out: 'main-world-armed.js',
+    format: 'iife',
+    plugins: [ignoreListPlugin],
+    define: { __DC_SIMULATION_ARMED__: 'true' },
+  },
+].map(({ entry, out, format, plugins = [], define }) => ({
   plugins,
+  define,
   entryPoints: [resolve(root, entry)],
   outfile: resolve(outDir, out),
   bundle: true,

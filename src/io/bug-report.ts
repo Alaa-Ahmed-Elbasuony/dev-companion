@@ -3,6 +3,7 @@
 // report applies the redaction rules once more as a safety net.
 import type { InvestigationResult } from '../analysis/investigation';
 import { redactFreeText } from '../analysis/redaction';
+import { describeSimulated } from '../analysis/simulated-traffic';
 import type { EntryBodies, NetworkEntry, RedactionRules, TimelineEvent } from '../shared/types';
 import { clip, safeUrl } from '../shared/util';
 
@@ -71,6 +72,20 @@ export function buildBugReportMarkdown(input: BugReportInput): string {
     '',
   );
   lines.push('## Actual behavior', '', r(inv.whatHappened), '');
+  const entryOf = (id: string) => input.entries.find((e) => e.id === id);
+  const simulated = inv.related.filter((ev) => ev.simulated);
+  if (simulated.length) {
+    lines.push(
+      '## Simulated requests',
+      '',
+      '> These outcomes were produced in the browser by Dev Companion simulation rules. Unless marked as sent, the server never received the request: do not report them as backend behavior.',
+      '',
+      ...simulated.map(
+        (ev) => `- ${r(ev.title)}: ${r(describeSimulated(ev.simulated!, entryOf(ev.ref.id)))}`,
+      ),
+      '',
+    );
+  }
   if (inv.divergence) {
     lines.push(
       '## Earliest verified point of divergence',
@@ -103,6 +118,7 @@ export function buildBugReportMarkdown(input: BugReportInput): string {
       const b = input.bodies.get(e.id);
       lines.push(`### ${e.method} ${r(safeUrl(e.url)?.pathname ?? e.url)} → ${e.status ?? e.state}`, '');
       lines.push(`- URL: ${r(e.url)}`, `- Request id: ${e.id}`, `- Duration: ${e.duration ?? '?'} ms`);
+      if (e.simulated) lines.push(`- ${r(describeSimulated(e.simulated, e))}`);
       if (e.errorMessage) lines.push(`- Error: ${r(e.errorMessage)}`);
       if (e.requestHeaders.length)
         lines.push(
@@ -135,7 +151,9 @@ export function buildBugReportMarkdown(input: BugReportInput): string {
   lines.push('## Possible causes (ranked)', '');
   if (!inv.causes.length) lines.push('_No rule produced a hypothesis for these events._');
   for (const c of inv.causes.slice(0, 10))
-    lines.push(`- **${LEVEL_LABEL[c.level]}:** ${r(c.text)} _(${r(c.because)})_`);
+    lines.push(
+      `- **${LEVEL_LABEL[c.level]}:** ${r(c.text)} _(${r(c.because)})_${c.simulated ? ' _(from a finding about the page reacting to simulated traffic)_' : ''}`,
+    );
   lines.push('');
   lines.push(
     '## Evidence still missing',
@@ -178,12 +196,31 @@ export function buildBugReportJson(input: BugReportInput): string {
       actual: r(inv.whatHappened),
       divergence: inv.divergence,
       reproduction: inv.reproduction.map(r),
-      related: inv.related.map((e) => ({ ...e, title: r(e.title), evidence: r(e.evidence) })),
+      related: inv.related.map((e) => ({
+        ...e,
+        title: r(e.title),
+        evidence: r(e.evidence),
+        ...(e.simulated ? { simulated: { ...e.simulated, ruleName: r(e.simulated.ruleName) } } : {}),
+      })),
+      // Requests whose outcome a simulation rule produced or altered.
+      simulatedRequests: inv.related
+        .filter((e) => e.simulated)
+        .map((e) => ({
+          id: e.ref.id,
+          description: r(
+            describeSimulated(
+              e.simulated!,
+              input.entries.find((x) => x.id === e.ref.id),
+            ),
+          ),
+        })),
       causes: inv.causes.map((c) => ({
         level: c.level,
         text: r(c.text),
         because: r(c.because),
         finding: c.findingId,
+        basis: c.basis,
+        simulated: c.simulated,
       })),
       missingEvidence: inv.missingEvidence.map(r),
       nextSteps: inv.nextSteps.map(r),
