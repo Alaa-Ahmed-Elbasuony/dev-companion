@@ -98,6 +98,8 @@ export function SettingsView({
     const invalidOrigins = parseLines(adapterText).filter((o) => !normalizeOrigin(o));
     const next = normalizeSettings({
       ...draft,
+      // Managed in the Simulation view: keep the stored list, never this form's copy.
+      simulationOrigins: settings.simulationOrigins,
       appAdapterOrigins: parseLines(adapterText),
       notificationSelectors: parseLines(selectorText),
       redaction: { ...draft.redaction, headerNames: parseLines(headerText), keyRules: parseLines(keyText) },

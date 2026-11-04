@@ -64,6 +64,7 @@ export function buildEntry(
     warnings: [...new Set(warnings)],
     redactions: 0,
     replayOf: extra.replayOf,
+    simulated: draft.simulated,
     bytes: 0,
   };
   const bodies: EntryBodies | undefined =

@@ -263,6 +263,14 @@ export function TimelineView(props: ViewProps & { messages: RealtimeMessage[] | 
                     </span>
                   )}
                   {item.title}
+                  {item.simulation && (
+                    <>
+                      {' '}
+                      <span className="tag" title={item.simulation.description}>
+                        {item.simulation.label}
+                      </span>
+                    </>
+                  )}
                   {item.endTime !== undefined && (
                     <span className="muted small"> · {formatDuration(item.endTime - item.time)}</span>
                   )}

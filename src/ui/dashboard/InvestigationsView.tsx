@@ -5,6 +5,7 @@ import type { Finding } from '../../analysis/error-detector';
 import { buildInvestigation } from '../../analysis/investigation';
 import type { ChecklistStep, InvestigationResult } from '../../analysis/investigation';
 import { buildPlaywrightDraft } from '../../analysis/playwright';
+import { isSimulated } from '../../analysis/simulated-traffic';
 import { buildBugReportJson, buildBugReportMarkdown } from '../../io/bug-report';
 import type { ContractBaseline, Investigation, InvestigationAnchor } from '../../shared/types';
 import { createId } from '../../shared/util';
@@ -94,6 +95,33 @@ export function InvestigationsView(
   );
 }
 
+const BASIS_LABEL = { backend: 'about the backend', frontend: 'about the page' } as const;
+
+/** Whether a finding describes the backend or the page, and whether simulated requests are involved. */
+function FindingBasis({ finding: f }: { finding: Finding }) {
+  return (
+    <>
+      {f.basis && (
+        <span
+          className="tag"
+          title={
+            f.basis === 'backend'
+              ? 'Describes server behavior (status, body, timing or lifecycle)'
+              : "Describes how the page's code reacted to network traffic"
+          }
+        >
+          {f.basis === 'backend' ? 'backend' : 'page behavior'}
+        </span>
+      )}
+      {f.simulation && (
+        <span className="tag" title={f.limitations[0]}>
+          {f.simulation.outcomeFromServer ? 'delayed by simulation' : 'simulated'}
+        </span>
+      )}
+    </>
+  );
+}
+
 function anchorOf(f: Finding): InvestigationAnchor | null {
   if (f.entryIds[0]) return { type: 'request', id: f.entryIds[0] };
   return f.refs?.[0] ?? null;
@@ -104,6 +132,7 @@ function FindingsList(props: ViewProps & { setCompareIds: (ids: { a?: string; b?
   const [severity, setSeverity] = useState<'all' | 'error' | 'warning'>('all');
   if (!analysis) return <p className="muted pad">Analyzing…</p>;
   const findings = analysis.findings.filter((f) => severity === 'all' || f.severity === severity);
+  const simulated = data.entries.filter(isSimulated).length;
   return (
     <div className="detective">
       <div className="filters">
@@ -111,6 +140,8 @@ function FindingsList(props: ViewProps & { setCompareIds: (ids: { a?: string; b?
           {analysis.findings.length} finding(s) from {data.entries.length} request(s),{' '}
           {data.connections.length} realtime connection(s) and {data.spans.length} server span(s). Findings
           separate observations from hypotheses.
+          {simulated > 0 &&
+            ` ${simulated} request(s) were simulated: backend findings use only the server's responses and never simulated timing; findings about how the page reacted include them and are tagged simulated.`}
         </span>
         <span className="spacer" />
         <select
@@ -140,6 +171,7 @@ function FindingsList(props: ViewProps & { setCompareIds: (ids: { a?: string; b?
                 <span className={`sev sev-${f.severity}`}>{f.severity}</span>
                 <h3>{f.title}</h3>
                 {f.evidenceLevel && <LevelBadge level={f.evidenceLevel} />}
+                <FindingBasis finding={f} />
                 {a && (
                   <button
                     type="button"
@@ -418,7 +450,7 @@ function Workspace(props: ViewProps & { anchor: InvestigationAnchor }) {
                 <li key={`${c.findingId}-${i}`}>
                   <LevelBadge level={c.level} /> {c.text}
                   <div className="muted small">
-                    {c.because} · from “{c.findingTitle}”
+                    {c.because} · from “{c.findingTitle}”{c.basis && ` · ${BASIS_LABEL[c.basis]}`}
                   </div>
                 </li>
               ))}

@@ -11,6 +11,7 @@ import type {
 } from '../shared/types';
 import { safeUrl } from '../shared/util';
 import { isFailure } from './filter';
+import { describeSimulated, simulationLabel } from './simulated-traffic';
 import type { EventRef } from './trace-correlate';
 
 export type TimelineCategory =
@@ -56,6 +57,8 @@ export interface UnifiedItem {
   ids: { requestId?: string; connectionId?: string; traceId?: string; eventName?: string; spanId?: string };
   /** Who observed it, e.g. "main-world", "cdp", "server", "page (adapter)". */
   observedBy: string;
+  /** A request a simulation rule produced or altered (see simulationLabel). */
+  simulation?: { label: 'simulated' | 'delayed by simulation'; description: string };
 }
 
 const CONSOLE_KINDS: TimelineKind[] = ['console-error', 'console-warn', 'js-error', 'unhandled-rejection'];
@@ -121,6 +124,9 @@ export function buildUnifiedTimeline(
       title: `${e.method} ${pathOf(e.url)} → ${e.status ?? e.state}`,
       ids: { requestId: e.id },
       observedBy: e.source === 'cdp' ? 'cdp' : 'main-world',
+      ...(e.simulated
+        ? { simulation: { label: simulationLabel(e)!, description: describeSimulated(e.simulated, e) } }
+        : {}),
     });
   }
   for (const t of input.timeline) {
@@ -214,7 +220,9 @@ export function filterUnified(
     if (filter.categories?.length && !filter.categories.includes(i.category)) return false;
     if (filter.onlyProblems && i.severity !== 'error' && i.severity !== 'warning') return false;
     if (!q) return true;
-    const hay = `${i.title} ${i.detail ?? ''} ${Object.values(i.ids).join(' ')}`.toLowerCase();
+    // "simulated" finds every simulated request, "delayed by simulation" only those the server answered.
+    const simulation = i.simulation ? `simulated ${i.simulation.label}` : '';
+    const hay = `${i.title} ${i.detail ?? ''} ${simulation} ${Object.values(i.ids).join(' ')}`.toLowerCase();
     return q.split(/\s+/).every((t) => hay.includes(t));
   });
 }

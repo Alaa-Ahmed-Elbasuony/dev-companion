@@ -11,6 +11,7 @@ import {
   statusClass,
 } from '../../analysis/filter';
 import type { RequestFilter, StatusFilter } from '../../analysis/filter';
+import { describeSimulated, simulationLabel } from '../../analysis/simulated-traffic';
 import type { CaptureSource, NetworkEntry } from '../../shared/types';
 import { MUTATING_METHODS, formatBytes, formatDuration, safeUrl } from '../../shared/util';
 import { MethodTag, Notice, StatusPill, VirtualList } from '../components/common';
@@ -138,6 +139,7 @@ function fromParams(p: Record<string, string>, slowMs: number): NetworkFilter {
     maxSizeBytes: kbParam(p.maxkb),
     hasWarnings: p.warn === '1',
     redirected: p.redir === '1',
+    simulated: p.sim === '1',
     problems: p.problems === '1' || preset === 'failed',
     mutations: p.mutations === '1' || preset === 'mutations',
     range: p.range ?? '',
@@ -160,6 +162,7 @@ function toParams(f: NetworkFilter, extra: Record<string, string>): Record<strin
     maxkb: f.maxSizeBytes !== undefined ? String(f.maxSizeBytes / 1024) : '',
     warn: f.hasWarnings ? '1' : '',
     redir: f.redirected ? '1' : '',
+    sim: f.simulated ? '1' : '',
     problems: f.problems ? '1' : '',
     mutations: f.mutations ? '1' : '',
     range: f.range,
@@ -303,6 +306,7 @@ export function NetworkView(props: ViewProps) {
     return sortEntries(list, sort);
   }, [entries, filter, bodyMatches, sort]);
 
+  const hasSimulated = useMemo(() => entries.some((e) => e.simulated), [entries]);
   const selected = entries.find((e) => e.id === selectedId) ?? null;
   const checkedVisible = visible.filter((e) => checked.has(e.id));
   const select = (id: string | null) => setParams({ ...params, id: id ?? '' });
@@ -418,6 +422,8 @@ export function NetworkView(props: ViewProps) {
     chips.push({ id: 'problems', label: 'failed only', onRemove: () => update({ problems: false }) });
   if (filter.mutations)
     chips.push({ id: 'mutations', label: 'mutations only', onRemove: () => update({ mutations: false }) });
+  if (filter.simulated)
+    chips.push({ id: 'sim', label: 'simulated only', onRemove: () => update({ simulated: false }) });
   if (filter.range)
     chips.push({
       id: 'range',
@@ -492,6 +498,17 @@ export function NetworkView(props: ViewProps) {
       active: filter.status === 'pending',
       apply: () => update({ status: filter.status === 'pending' ? 'all' : 'pending' }),
     },
+    // Offered only in sessions with simulated requests (or while the filter is on).
+    ...(hasSimulated || filter.simulated
+      ? [
+          {
+            id: 'simulated',
+            label: 'Simulated',
+            active: !!filter.simulated,
+            apply: () => update({ simulated: !filter.simulated }),
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -874,7 +891,13 @@ export function NetworkView(props: ViewProps) {
               </EmptyState>
             ) : (
               <EmptyState
-                title="No requests match the current filters."
+                title={
+                  filter.simulated && !hasSimulated
+                    ? 'This session has no simulated requests.'
+                    : filter.simulated
+                      ? 'No simulated requests match the current filters.'
+                      : 'No requests match the current filters.'
+                }
                 action={
                   <button type="button" className="btn btn-small" onClick={clearAll}>
                     Clear all filters
@@ -945,6 +968,11 @@ export function NetworkView(props: ViewProps) {
                       {e.warnings.length > 0 && (
                         <span className="warn-icon" title={e.warnings.join('\n')} aria-label="has warnings">
                           ⚠
+                        </span>
+                      )}
+                      {e.simulated && (
+                        <span className="tag" title={describeSimulated(e.simulated, e)}>
+                          {simulationLabel(e)}
                         </span>
                       )}
                     </span>

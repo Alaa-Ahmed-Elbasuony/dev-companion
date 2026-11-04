@@ -1277,6 +1277,60 @@ body.popup {
   margin: 8px 0;
 }
 
+/* Simulation */
+.sim-switch,
+.sim-add-origin {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+.sim-add-origin input {
+  min-width: 260px;
+  font-family: var(--mono);
+}
+.sim-status {
+  max-width: 640px;
+  margin-bottom: 8px;
+}
+.sim-blockers {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+.sim-origins li {
+  margin: 4px 0;
+}
+.sim-rules td {
+  white-space: normal;
+  vertical-align: middle;
+}
+.sim-rule-pattern {
+  word-break: break-all;
+}
+.sim-rule-actions {
+  white-space: nowrap;
+}
+.sim-rule-actions .btn + .btn {
+  margin-left: 4px;
+}
+.sim-rule-off td {
+  color: var(--text-muted);
+}
+.sim-editor fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  margin: 10px 0;
+  padding: 6px 10px 10px;
+}
+.field-error {
+  color: var(--status-error);
+  font-size: var(--text-sm);
+}
+[aria-invalid='true'] {
+  border-color: var(--status-error);
+}
+
 /* Modal */
 .modal-backdrop {
   position: fixed;

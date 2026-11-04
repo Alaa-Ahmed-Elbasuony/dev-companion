@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { SUPPORTED_SCHEMA_KEYWORDS } from '../../analysis/contracts';
 import { compareEntries, VOLATILE_HEADERS } from '../../analysis/request-diff';
 import type { BodyDiff, HeaderDiff } from '../../analysis/request-diff';
+import { describeSimulated, responseOrigin } from '../../analysis/simulated-traffic';
 import type { ContractBaseline, EntryBodies, NetworkEntry } from '../../shared/types';
 import { clip, endpointKey, formatDuration, tryParseJson } from '../../shared/util';
 import { CopyButton, CopyIcon, MethodTag, Notice, StatusPill } from '../components/common';
@@ -207,6 +208,11 @@ function RequestPicker({
             <MethodTag method={e.method} /> <StatusPill entry={e} /> <span className="break">{e.url}</span>
             <span className="muted small cmp-picker-meta">
               {same && <span className="tag">same endpoint</span>}{' '}
+              {e.simulated && (
+                <span className="tag" title={describeSimulated(e.simulated, e)}>
+                  simulated
+                </span>
+              )}{' '}
               {new Date(e.startedAt).toLocaleTimeString()} · {formatDuration(e.duration)}
             </span>
           </li>
@@ -395,6 +401,7 @@ export function CompareView({
             </button>
             <div className="muted small">
               {new Date(loaded.entry.startedAt).toLocaleString()} · {loaded.entry.source}
+              {loaded.entry.simulated && <> · {describeSimulated(loaded.entry.simulated, loaded.entry)}</>}
             </div>
           </>
         ) : (
@@ -422,8 +429,22 @@ export function CompareView({
         <>
           <section className="cmp-section">
             <h3>Summary</h3>
+            {(comparison.simulated.a || comparison.simulated.b) && (
+              <Notice kind="info">
+                {comparison.simulated.mixed
+                  ? `Request ${comparison.simulated.a ? 'A' : 'B'} is simulated and request ${comparison.simulated.a ? 'B' : 'A'} is real: differences may come from the simulation rule, not from the backend.`
+                  : 'Both requests are simulated: neither outcome shows how the backend behaves.'}
+              </Notice>
+            )}
             <table className="diff">
               <tbody>
+                {(comparison.simulated.a || comparison.simulated.b) && (
+                  <tr className={comparison.simulated.mixed ? 'diff-changed' : ''}>
+                    <th>Outcome from</th>
+                    <td>{responseOrigin(comparison.simulated.a, a?.entry)}</td>
+                    <td>{responseOrigin(comparison.simulated.b, b?.entry)}</td>
+                  </tr>
+                )}
                 <tr className={comparison.method.same ? '' : 'diff-changed'}>
                   <th>Method</th>
                   <td>{comparison.method.a}</td>

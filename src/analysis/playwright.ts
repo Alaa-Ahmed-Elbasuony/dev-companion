@@ -4,6 +4,7 @@
 // creates server data unless the developer opts in.
 import type { NetworkEntry, TimelineEvent } from '../shared/types';
 import { MUTATING_METHODS, safeUrl } from '../shared/util';
+import { describeSimulated } from './simulated-traffic';
 
 export interface PlaywrightInput {
   /** The request or event the test should reproduce. */
@@ -16,6 +17,12 @@ export interface PlaywrightInput {
 }
 
 const q = (s: string) => `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+
+/** A recorded outcome a simulation rule produced is not what the server returns. */
+const simulatedNote = (e: NetworkEntry) =>
+  e.simulated
+    ? [`  // SIMULATED: ${describeSimulated(e.simulated, e)}. The recorded outcome is not the server's.`]
+    : [];
 
 /** Parses the recorder's click message: Clicked <button#save> "Save order". */
 export function locatorForClick(message: string): string | null {
@@ -70,6 +77,7 @@ export function buildPlaywrightDraft(input: PlaywrightInput): string {
       if (mutation) {
         lines.push(
           `  // MUTATION: this click sent ${mutation.method} ${safeUrl(mutation.url)?.pathname ?? mutation.url} (status ${mutation.status ?? mutation.state}).`,
+          ...simulatedNote(mutation),
         );
         if (isTarget) {
           lines.push(
@@ -93,6 +101,7 @@ export function buildPlaywrightDraft(input: PlaywrightInput): string {
   const target = input.target;
   if (target && !MUTATING_METHODS.has(target.method)) {
     lines.push(
+      ...simulatedNote(target),
       `  const response = await page.waitForResponse((r) => r.url().includes(${q(safeUrl(target.url)?.pathname ?? target.url)}));`,
       `  expect(response.status()).toBeLessThan(400); // recorded: ${target.status ?? target.state}`,
     );

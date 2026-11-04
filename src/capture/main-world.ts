@@ -13,9 +13,17 @@ import { installPageEventsRecorder } from './page-events-recorder';
 import { installWebSocketRecorder } from './websocket-recorder';
 import { installXhrRecorder } from './xhr-recorder';
 
+/** Defined only by the build of main-world-armed.js (see scripts/build.mjs). */
+declare const __DC_SIMULATION_ARMED__: boolean | undefined;
+
 export const INSTALL_MARKER = Symbol.for('dev-companion.recorder-installed');
 
-export function installRecorder(win: Window & typeof globalThis): boolean {
+export interface InstallOptions {
+  /** Simulation may be active for this origin (the armed build). */
+  simulationArmed?: boolean;
+}
+
+export function installRecorder(win: Window & typeof globalThis, options: InstallOptions = {}): boolean {
   const flagged = win as unknown as Record<symbol, unknown>;
   if (flagged[INSTALL_MARKER]) return false;
   Object.defineProperty(win, INSTALL_MARKER, { value: true, enumerable: false });
@@ -28,8 +36,13 @@ export function installRecorder(win: Window & typeof globalThis): boolean {
     config: channel.config,
     onConfig: channel.onConfig,
     pageUrl: () => win.location.href,
+    baseUrl: () => win.document.baseURI,
     now: () => Date.now(),
     newId: createId,
+    simulationArmed: options.simulationArmed === true,
+    whenConfigured: channel.whenConfigured,
+    random: Math.random,
+    acknowledgeSimulation: channel.acknowledgeSimulation,
   };
   installFetchRecorder(win, ctx);
   installXhrRecorder(win, ctx);
@@ -47,7 +60,9 @@ export function installRecorder(win: Window & typeof globalThis): boolean {
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   try {
-    installRecorder(window);
+    installRecorder(window, {
+      simulationArmed: typeof __DC_SIMULATION_ARMED__ !== 'undefined' && __DC_SIMULATION_ARMED__ === true,
+    });
   } catch {
     /* never break the page */
   }

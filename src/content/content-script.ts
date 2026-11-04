@@ -1,7 +1,15 @@
 // Isolated-world bridge: relays recorder events from the page to the service
 // worker and forwards recording configuration back to the page.
 import { BRIDGE_TO_PAGE_EVENT, PAGE_TO_BRIDGE_EVENT } from '../shared/messages';
-import type { Broadcast, PageConfigResponse, PageMessage, WorkerRequest } from '../shared/messages';
+import type {
+  Broadcast,
+  PageConfigResponse,
+  PageMessage,
+  SimulationProbeResponse,
+  WorkerRequest,
+} from '../shared/messages';
+import { SIMULATION_LEASE_RENEW_MS, sanitizeSimulationAck } from '../shared/simulation';
+import type { SimulationAck } from '../shared/simulation';
 import type { CaptureConfig } from '../shared/types';
 
 const FLUSH_MS = 50;
@@ -25,17 +33,20 @@ function startBridge() {
   const batch: PageMessage[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let alive = true;
+  let leaseTimer: ReturnType<typeof setTimeout> | undefined;
+  // What the page's recorder last reported applying (null: not simulating).
+  let applied: SimulationAck = null;
 
   const sendToWorker = (message: WorkerRequest) => {
     if (!alive) return Promise.resolve(undefined);
     try {
       return chrome.runtime.sendMessage(message).catch((err: unknown) => {
         // "Extension context invalidated" after reload/update: stop relaying.
-        if (String(err).includes('context invalidated')) alive = false;
+        if (String(err).includes('context invalidated')) disconnect();
         return undefined;
       });
     } catch {
-      alive = false;
+      disconnect();
       return Promise.resolve(undefined);
     }
   };
@@ -45,7 +56,27 @@ function startBridge() {
     document.dispatchEvent(
       new CustomEvent(BRIDGE_TO_PAGE_EVENT, { detail: JSON.stringify({ type: 'config', config }) }),
     );
+    // While the page holds simulation rules, keep renewing their lease. If renewal
+    // stops (worker unreachable), the page stops simulating when the lease runs out.
+    if (leaseTimer) clearTimeout(leaseTimer);
+    leaseTimer =
+      config.simulation && alive
+        ? setTimeout(() => void requestConfig(), SIMULATION_LEASE_RENEW_MS)
+        : undefined;
   };
+
+  // The extension was reloaded or updated: nothing can renew the rules any more, so
+  // the page must stop simulating now rather than when its lease expires.
+  function disconnect() {
+    if (!alive) return;
+    alive = false;
+    if (leaseTimer) clearTimeout(leaseTimer);
+    leaseTimer = undefined;
+    if (config?.simulation) {
+      config = { ...config, simulation: undefined };
+      pushConfigToPage();
+    }
+  }
 
   // Token bucket for realtime frames: sustained FRAME_RATE per second, bursts up to FRAME_BURST.
   let tokens = FRAME_BURST;
@@ -85,6 +116,15 @@ function startBridge() {
       pushConfigToPage();
       return;
     }
+    if (message.type === 'simulation-applied') {
+      const ack = sanitizeSimulationAck((message as { ack?: unknown }).ack);
+      if (ack === undefined) return;
+      const changed = (ack?.revision ?? null) !== (applied?.revision ?? null);
+      applied = ack;
+      // Lease renewals repeat the same revision: only a change reaches the worker.
+      if (changed) void sendToWorker({ type: 'simulation-applied', revision: ack?.revision ?? null });
+      return;
+    }
     if (!config?.enabled) return;
     // Realtime frames can arrive far faster than requests. Beyond the budget they are
     // dropped (never connections, requests or timeline events) and the loss is reported.
@@ -104,16 +144,28 @@ function startBridge() {
     flush();
   });
 
-  chrome.runtime.onMessage.addListener((message: Broadcast) => {
+  chrome.runtime.onMessage.addListener((message: Broadcast, _sender, sendResponse) => {
     if (message?.type === 'recording-state') {
       config = message.config;
       pushConfigToPage();
+    } else if (message?.type === 'simulation-probe') {
+      // Answered by this document only: an earlier document of the tab cannot confirm.
+      const response: SimulationProbeResponse = { ack: applied };
+      sendResponse(response);
     }
   });
 
   async function requestConfig() {
     const response = (await sendToWorker({ type: 'page-config-request' })) as PageConfigResponse | undefined;
-    if (!response) return;
+    if (!response) {
+      // Renewal failed (worker unreachable): try again. The page stops simulating
+      // when its lease runs out, whether or not a later attempt succeeds.
+      if (alive && config?.simulation) {
+        if (leaseTimer) clearTimeout(leaseTimer);
+        leaseTimer = setTimeout(() => void requestConfig(), SIMULATION_LEASE_RENEW_MS);
+      }
+      return;
+    }
     config = response.config;
     pushConfigToPage();
   }

@@ -11,6 +11,7 @@ export type View =
   | 'console'
   | 'storage'
   | 'investigations'
+  | 'simulation'
   | 'settings';
 
 export const VIEWS: { id: View; label: string; key: string }[] = [
@@ -22,6 +23,7 @@ export const VIEWS: { id: View; label: string; key: string }[] = [
   { id: 'console', label: 'Console', key: '6' },
   { id: 'storage', label: 'Storage', key: '7' },
   { id: 'investigations', label: 'Investigations', key: '8' },
+  { id: 'simulation', label: 'Simulation', key: '0' },
   { id: 'settings', label: 'Settings', key: '9' },
 ];
 

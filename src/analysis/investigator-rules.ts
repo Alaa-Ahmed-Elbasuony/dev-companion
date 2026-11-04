@@ -16,6 +16,7 @@ import { isFailure, statusClass } from './filter';
 import type { OpenApiDoc } from './openapi';
 import { validateEntryAgainstOpenApi } from './openapi';
 import { endpointOf, fnv1a } from './realtime/decode';
+import { analysisInputs, labelFindings } from './simulated-traffic';
 
 export interface InvestigatorInput extends DetectorInput {
   connections?: RealtimeConnection[];
@@ -968,19 +969,24 @@ function openApiFindings(input: InvestigatorInput): Finding[] {
   return out;
 }
 
+/** Each rule sees the simulated requests its kind of finding may use (see simulated-traffic.ts). */
 export function investigatorFindings(input: InvestigatorInput): Finding[] {
-  return [
-    ...connectionFindings(input),
-    ...messageFindings(input),
-    ...expectationFindings(input),
-    ...authFindings(input),
-    ...pendingForeverFindings(input),
-    ...responseMappingFindings(input),
-    ...staleCacheFindings(input),
-    ...hydrationFindings(input),
-    ...serverFindings(input),
-    ...openApiFindings(input),
-  ];
+  const { real, responses, all } = analysisInputs(input);
+  return labelFindings(
+    [
+      ...connectionFindings(all),
+      ...messageFindings(all),
+      ...expectationFindings(responses),
+      ...authFindings(responses),
+      ...pendingForeverFindings(real),
+      ...responseMappingFindings(all),
+      ...staleCacheFindings(responses),
+      ...hydrationFindings(all),
+      ...serverFindings(all),
+      ...openApiFindings(responses),
+    ],
+    input.entries,
+  );
 }
 
 /** Fills evidence levels for findings produced by the original Error Detective rules. */

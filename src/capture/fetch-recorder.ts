@@ -1,13 +1,33 @@
 // Wraps window.fetch. The wrapper returns the *original* promise, so the page
 // observes exactly the same Response object, resolution timing and rejection.
 // All capture work is wrapped in try/catch so it can never break the page.
+//
+// Exception: while the page holds simulation rules (opt-in, allowlisted dev origins
+// only), a matching request gets a simulated outcome instead (see simulate.ts).
+// Requests no rule applies to still get the original promise.
 import type { CapturedBody, EntryState, NetworkDraft } from '../shared/types';
 import { readResponseBody, serializeRequestBody } from './body';
 import type { RecorderContext } from './context';
-import { captureStack, describeError, headersToPairs } from './context';
+import { captureStack, describeError, headersToPairs, resolveRequestUrl } from './context';
 import { isEventStream, parseFetchEventStream } from './fetch-stream';
+import {
+  GATE_TIMEOUT_NOTE,
+  RELEASED_NOTE,
+  describeSimulation,
+  simulateFetch,
+  simulatorFor,
+  waitForGate,
+} from './simulate';
+import type { SimulationDecision } from './simulate';
 
 type FetchFn = typeof fetch;
+
+/** One page call: its receiver, arguments and call-site stack. */
+interface Call {
+  receiver: unknown;
+  args: Parameters<FetchFn>;
+  stack: string | undefined;
+}
 
 interface FetchTarget {
   fetch: FetchFn;
@@ -23,17 +43,93 @@ export function installFetchRecorder(target: FetchTarget, ctx: RecorderContext):
   const originalFetch = target.fetch;
   if (typeof originalFetch !== 'function') return () => undefined;
 
+  const simulator = simulatorFor(ctx);
+
   const wrapped = function fetch(this: unknown, ...args: Parameters<FetchFn>): ReturnType<FetchFn> {
+    let stack: string | undefined;
+    try {
+      // Taken here, at the page's call site, so no recorder frame leads the stack
+      // (and a request held at startup still records its real caller).
+      if (ctx.config().enabled) stack = captureStack(ctx, 2);
+    } catch {
+      stack = undefined;
+    }
+    const call: Call = { receiver: this, args, stack };
+    // The armed recorder holds requests issued before the simulation rules arrived.
+    const gate = simulator.gate();
+    return gate ? afterGate(gate, call) : intercept(call);
+  };
+
+  function afterGate(gate: Promise<void>, call: Call): ReturnType<FetchFn> {
+    let signal: AbortSignal | undefined;
+    try {
+      signal = signalOf(call.args[0], call.args[1]);
+    } catch {
+      signal = undefined;
+    }
+    return waitForGate(gate, signal).then(() =>
+      intercept(call, simulator.gateTimedOut() ? GATE_TIMEOUT_NOTE : undefined),
+    );
+  }
+
+  function intercept(call: Call, note?: string): ReturnType<FetchFn> {
+    let decision: SimulationDecision | undefined;
+    if (simulator.active()) {
+      try {
+        const { method, url } = requestTarget(call.args[0], call.args[1]);
+        decision = simulator.decide(method, url);
+      } catch {
+        decision = undefined;
+      }
+    }
+    return decision ? simulated(call, decision) : passThrough(call, note);
+  }
+
+  function passThrough(call: Call, note?: string): ReturnType<FetchFn> {
+    const { receiver, args } = call;
     let begin: ReturnType<typeof beginCapture> | undefined;
     try {
-      if (ctx.config().enabled) begin = beginCapture(args[0], args[1]);
+      if (ctx.config().enabled) begin = beginCapture(args[0], args[1], call.stack);
+      if (begin && note) begin.draft.warnings.push(note);
     } catch {
       begin = undefined;
     }
     // Call the original with the exact arguments and receiver.
-    const promise = Reflect.apply(originalFetch, this, args) as ReturnType<FetchFn>;
+    const promise = Reflect.apply(originalFetch, receiver, args) as ReturnType<FetchFn>;
     if (!begin) return promise;
-    const capture = begin;
+    observe(begin, promise);
+    return promise;
+  }
+
+  /** A rule applies: the page gets the simulated outcome; capture records it like any request. */
+  function simulated(call: Call, decision: SimulationDecision): ReturnType<FetchFn> {
+    const { receiver, args } = call;
+    let begin: ReturnType<typeof beginCapture> | undefined;
+    try {
+      if (ctx.config().enabled) begin = beginCapture(args[0], args[1], call.stack);
+      if (begin) {
+        // Set synchronously: network-start is emitted later, once the request body is read.
+        begin.draft.simulated = { ...decision.info };
+        begin.draft.warnings.push(describeSimulation(decision));
+      }
+    } catch {
+      begin = undefined;
+    }
+    const promise = simulateFetch(simulator, decision, {
+      url: requestTarget(args[0], args[1]).url,
+      signal: signalOf(args[0], args[1]),
+      send: () => Reflect.apply(originalFetch, receiver, args) as ReturnType<FetchFn>,
+      onReleased: () => {
+        if (!begin) return;
+        begin.draft.simulated = { ...decision.info, sent: true };
+        begin.draft.warnings.push(RELEASED_NOTE);
+      },
+    });
+    if (begin) observe(begin, promise);
+    return promise;
+  }
+
+  function observe(capture: ReturnType<typeof beginCapture>, promise: ReturnType<FetchFn>) {
     promise.then(
       (response) => {
         void finishWithResponse(capture, response).catch(() => undefined);
@@ -42,19 +138,23 @@ export function installFetchRecorder(target: FetchTarget, ctx: RecorderContext):
         void finishWithError(capture, err).catch(() => undefined);
       },
     );
-    return promise;
-  };
+  }
 
-  function beginCapture(input: RequestInfo | URL, init: RequestInit | undefined) {
+  function requestTarget(input: RequestInfo | URL, init: RequestInit | undefined) {
     const isRequest = typeof Request !== 'undefined' && input instanceof Request;
-    const rawUrl = isRequest ? input.url : String(input);
-    let url = rawUrl;
-    try {
-      url = new URL(rawUrl, ctx.pageUrl()).href;
-    } catch {
-      /* keep raw */
-    }
+    const url = resolveRequestUrl(ctx, isRequest ? input.url : String(input));
     const method = String(init?.method ?? (isRequest ? input.method : 'GET')).toUpperCase();
+    return { url, method };
+  }
+
+  function signalOf(input: RequestInfo | URL, init: RequestInit | undefined): AbortSignal | undefined {
+    const isRequest = typeof Request !== 'undefined' && input instanceof Request;
+    return init?.signal ?? (isRequest ? input.signal : undefined);
+  }
+
+  function beginCapture(input: RequestInfo | URL, init: RequestInit | undefined, stack: string | undefined) {
+    const isRequest = typeof Request !== 'undefined' && input instanceof Request;
+    const { url, method } = requestTarget(input, init);
     let headers: Headers | undefined;
     try {
       headers = new Headers(
@@ -96,10 +196,10 @@ export function installFetchRecorder(target: FetchTarget, ctx: RecorderContext):
       requestHeaders: headersToPairs(headers),
       responseHeaders: [],
       startedAt: ctx.now(),
-      initiatorStack: captureStack(ctx, 3),
+      initiatorStack: stack,
       warnings: [],
     };
-    const signal = init?.signal ?? (isRequest ? input.signal : undefined);
+    const signal = signalOf(input, init);
     const started = requestBody
       .catch((): CapturedBody => ({ kind: 'unreadable', note: 'Request body could not be read' }))
       .then((body) => {

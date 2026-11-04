@@ -1,7 +1,21 @@
 // Service worker: routes messages, gates capture on recording state and writes
 // to IndexedDB. Holds no durable state in memory; it may be terminated at any time.
-import type { PageConfigResponse, StartResult, TabStateResponse, WorkerRequest } from '../shared/messages';
+import type {
+  PageConfigResponse,
+  SimulationStateResponse,
+  SimulationUpdateResponse,
+  StartResult,
+  TabStateResponse,
+  WorkerRequest,
+} from '../shared/messages';
 import { captureConfigFrom, normalizeSettings } from '../shared/settings';
+import {
+  SIMULATION_RULES_KEY,
+  pageSimulationStatus,
+  simulationDelivery,
+  simulationRevision,
+} from '../shared/simulation';
+import type { SimulationState } from '../shared/simulation';
 import type { Settings } from '../shared/types';
 import { createId, originOf } from '../shared/util';
 import { EntryStore } from '../storage/database';
@@ -9,11 +23,25 @@ import { AdvancedCapture } from './cdp';
 import { Ingestor } from './ingest';
 import { RecordingController } from './recording';
 import { TraceSync } from './server-traces';
+import {
+  applySimulationRuleChange,
+  forgetSimulationSent,
+  getSimulationSent,
+  loadSimulationState,
+  probePageSimulation,
+  recordSimulationSent,
+  saveSimulationRules,
+  setSimulationArmed,
+} from './simulation';
+import { restrictLocalStorageAccess } from './storage-access';
 import { originToPattern } from './url-policy';
 
 const PENDING_START_KEY = 'pendingStart';
 const STORAGE_STATUS_KEY = 'storageStatus';
 
+// First thing on every start. Content scripts are registered and injected only
+// through the controller, which waits for this (it never rejects).
+const storageRestricted = restrictLocalStorageAccess();
 const storePromise = EntryStore.open();
 let settingsCache: Settings | null = null;
 
@@ -23,6 +51,14 @@ async function getSettings(): Promise<Settings> {
     settingsCache = normalizeSettings(data.settings);
   }
   return settingsCache;
+}
+
+// Rules can be large, and every page asks for its config again to renew the
+// simulation lease, so they are cached until they change.
+let simulationCache: SimulationState | null = null;
+async function getSimulation(): Promise<SimulationState> {
+  simulationCache ??= await loadSimulationState();
+  return simulationCache;
 }
 
 // Serialize all state-changing work so start/stop/ingest never interleave.
@@ -46,10 +82,16 @@ function reportStorageError(message: string) {
 }
 
 async function getController() {
-  return new RecordingController(await storePromise, getSettings, () => {
-    chrome.runtime.sendMessage({ type: 'recording-changed' }).catch(() => undefined);
-    broadcastDataChanged();
-  });
+  await storageRestricted;
+  return new RecordingController(
+    await storePromise,
+    getSettings,
+    () => {
+      chrome.runtime.sendMessage({ type: 'recording-changed' }).catch(() => undefined);
+      broadcastDataChanged();
+    },
+    getSimulation,
+  );
 }
 
 async function getIngestor() {
@@ -163,11 +205,22 @@ async function handle(message: WorkerRequest, sender: chrome.runtime.MessageSend
       const rec = tabId === undefined ? null : await controller.get(tabId);
       const origin = sender.origin ?? originOf(sender.url ?? '');
       const recording = !!rec && rec.origin === origin && sender.frameId === 0 && !rec.paused;
+      // Rules are sent only for the sender origin Chrome reports, never one the page claims.
       const response: PageConfigResponse = {
         recording,
-        config: captureConfigFrom(settings, recording, origin),
+        config: captureConfigFrom(settings, recording, origin, await getSimulation()),
       };
+      // A reloaded page is a new document: it must acknowledge the rules again.
+      if (tabId !== undefined && sender.frameId === 0)
+        await recordSimulationSent(tabId, response.config.simulation?.revision, sender.documentId);
       return response;
+    }
+    case 'simulation-applied': {
+      // Only a change of what the page applies; the Simulation view asks the page itself.
+      const tabId = sender.tab?.id;
+      if (tabId === undefined || sender.frameId !== 0) return { ok: false };
+      chrome.runtime.sendMessage({ type: 'simulation-page-changed', tabId }).catch(() => undefined);
+      return { ok: true };
     }
   }
 
@@ -233,6 +286,28 @@ async function handle(message: WorkerRequest, sender: chrome.runtime.MessageSend
       broadcastDataChanged();
       return { ok: true };
     }
+    case 'set-simulation-armed': {
+      await setSimulationArmed(message.armed);
+      simulationCache = null;
+      await serial(() => controller.applySimulationChange());
+      return simulationStatus();
+    }
+    case 'get-simulation-state':
+      return simulationStatus(message.tabId);
+    case 'update-simulation-rules': {
+      const result = await serial(async () => {
+        // Applied to the rules stored now, never to the sender's (possibly stale) copy.
+        const { rules } = await loadSimulationState();
+        const applied = applySimulationRuleChange(rules, message.change, Date.now());
+        if (!applied.ok) return applied;
+        await saveSimulationRules(applied.rules);
+        simulationCache = null;
+        await controller.applySimulationChange();
+        return { ok: true as const, id: applied.id };
+      });
+      const response: SimulationUpdateResponse = { ...result, state: await simulationStatus() };
+      return response;
+    }
     case 'set-pending-start':
       await chrome.storage.session.set({
         [PENDING_START_KEY]: { tabId: message.tabId, url: message.url, at: Date.now() },
@@ -240,6 +315,40 @@ async function handle(message: WorkerRequest, sender: chrome.runtime.MessageSend
       return { ok: true };
   }
   return { ok: false, reason: 'unknown-message' };
+}
+
+async function simulationStatus(tabId?: number): Promise<SimulationStateResponse> {
+  // Read from storage, not the caches: an extension page may ask right after it
+  // saved the allowlist, before storage.onChanged has reached the worker.
+  const [simulation, settings] = await Promise.all([
+    loadSimulationState(),
+    chrome.storage.local.get('settings').then((d) => normalizeSettings(d.settings)),
+  ]);
+  const response: SimulationStateResponse = {
+    armed: simulation.armed,
+    enabledRules: simulation.rules.filter((r) => r.enabled).length,
+    origins: settings.simulationOrigins,
+    rules: simulation.rules,
+  };
+  if (tabId !== undefined) {
+    const rec = await (await getController()).get(tabId);
+    // The tab's current URL: a tab that navigated to another origin gets no rules.
+    // Without host access Chrome hides the URL; then only the recording can tell.
+    const url = await chrome.tabs.get(tabId).then(
+      (t) => t.url ?? '',
+      () => '',
+    );
+    const origin = url ? (/^https?:/i.test(url) ? originOf(url) : undefined) : rec?.origin;
+    const page = pageSimulationStatus(settings, simulation, rec, origin, Date.now());
+    if (page.active) {
+      // Never "active" on the worker's word: the tab's current document must confirm the rules.
+      const [sent, ack] = await Promise.all([getSimulationSent(tabId), probePageSimulation(tabId)]);
+      const expected = simulationRevision(simulation.rules.filter((r) => r.enabled));
+      Object.assign(page, simulationDelivery(expected, sent, ack, Date.now()));
+    }
+    response.page = page;
+  }
+  return response;
 }
 
 chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, sendResponse) => {
@@ -271,6 +380,7 @@ chrome.permissions.onAdded.addListener((permissions) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  void forgetSimulationSent(tabId).catch(() => undefined);
   void (async () => {
     const controller = await getController();
     await serial(() => controller.stop(tabId, 'Tab closed'));
@@ -278,9 +388,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !changes.settings) return;
-  settingsCache = normalizeSettings(changes.settings.newValue);
-  void getController().then((c) => c.notifyAllRecordingTabs());
+  if (area !== 'local' || (!changes.settings && !changes[SIMULATION_RULES_KEY])) return;
+  if (changes.settings) settingsCache = normalizeSettings(changes.settings.newValue);
+  if (changes[SIMULATION_RULES_KEY]) simulationCache = null;
+  // Settings carry the simulation allowlist, so registration may change as well.
+  void getController()
+    .then((c) => serial(() => c.applySimulationChange()))
+    .catch(() => undefined);
 });
 
 // Registered scripts do not persist across browser restarts (and neither does

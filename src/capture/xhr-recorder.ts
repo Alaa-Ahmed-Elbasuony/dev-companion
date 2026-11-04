@@ -1,19 +1,34 @@
 // Patches XMLHttpRequest.prototype. Original methods are always called with the
 // original receiver and arguments; capture only adds passive event listeners.
+//
+// Exception: while the page holds simulation rules (opt-in, allowlisted dev origins
+// only), a matching asynchronous request gets a simulated outcome instead (see
+// xhr-simulate.ts). Synchronous requests are never simulated.
 import type { CapturedBody, NetworkDraft } from '../shared/types';
 import { truncateText, utf8Length } from '../shared/util';
 import { serializeRequestBody } from './body';
 import type { RecorderContext } from './context';
-import { captureStack, parseRawHeaders } from './context';
+import { captureStack, parseRawHeaders, resolveRequestUrl } from './context';
+import { GATE_TIMEOUT_NOTE, RELEASED_NOTE, describeSimulation, simulatorFor } from './simulate';
+import type { SimulationDecision } from './simulate';
+import { createXhrSimulations, invalidStateError } from './xhr-simulate';
+
+const DONE = 4;
 
 interface XhrMeta {
   method: string;
   url: string;
+  /** open() was called with async = true (the default). */
+  async: boolean;
   headers: { name: string; value: string }[];
   outcome?: 'abort' | 'timeout' | 'error';
   draft?: NetworkDraft;
   started?: Promise<void>;
 }
+
+/** A matching rule, or the startup gate that has to open before one can be chosen. */
+type SimulationPlan =
+  { decision: SimulationDecision; gate?: undefined } | { gate: Promise<void>; decision?: undefined };
 
 interface XhrHost {
   XMLHttpRequest: typeof XMLHttpRequest;
@@ -26,26 +41,58 @@ export function installXhrRecorder(host: XhrHost, ctx: RecorderContext): () => v
   const originalOpen = proto.open;
   const originalSend = proto.send;
   const originalSetRequestHeader = proto.setRequestHeader;
+  const originalAbort = proto.abort;
   const meta = new WeakMap<XMLHttpRequest, XhrMeta>();
   const listening = new WeakSet<XMLHttpRequest>();
+  const simulator = simulatorFor(ctx);
+  const simulations = createXhrSimulations();
 
   const open = function open(this: XMLHttpRequest, ...args: unknown[]) {
+    const previous = meta.get(this);
+    try {
+      // Reused from its own load/error handler: record the finished request now,
+      // before open() resets its response.
+      if (previous?.draft && this.readyState === DONE) finish(this, previous, previous.draft);
+    } catch {
+      /* ignore */
+    }
     const result = Reflect.apply(originalOpen, this, args) as void;
     try {
-      let url = String(args[1]);
-      try {
-        url = new URL(url, ctx.pageUrl()).href;
-      } catch {
-        /* keep raw */
-      }
-      meta.set(this, { method: String(args[0]).toUpperCase(), url, headers: [] });
+      abandon(previous);
+      simulations.afterOpen(this);
+    } catch {
+      /* ignore */
+    }
+    try {
+      const url = resolveRequestUrl(ctx, String(args[1]));
+      // open(method, url, async): an explicit (even undefined) third argument is converted to boolean.
+      const async = args.length < 3 || !!args[2];
+      meta.set(this, { method: String(args[0]).toUpperCase(), url, async, headers: [] });
     } catch {
       /* ignore */
     }
     return result;
   };
 
+  /**
+   * open() terminates a pending request without any event. Without this, the
+   * request's loadend listener would later record it with the next request's response.
+   */
+  function abandon(m: XhrMeta | undefined) {
+    const draft = m?.draft;
+    if (!m || !draft) return;
+    m.draft = undefined;
+    draft.state = 'aborted';
+    draft.errorName = 'AbortError';
+    draft.errorMessage = 'open() was called again before this request completed';
+    draft.endedAt = ctx.now();
+    const done = { ...draft };
+    void (m.started ?? Promise.resolve()).then(() => ctx.emit({ type: 'network-end', draft: done }));
+  }
+
   const setRequestHeader = function setRequestHeader(this: XMLHttpRequest, ...args: unknown[]) {
+    // A simulated request counts as sent: headers can no longer be set.
+    if (simulations.blocksSend(this)) throw invalidStateError('setRequestHeader');
     const result = Reflect.apply(originalSetRequestHeader, this, args) as void;
     try {
       meta.get(this)?.headers.push({ name: String(args[0]).toLowerCase(), value: String(args[1]) });
@@ -56,14 +103,21 @@ export function installXhrRecorder(host: XhrHost, ctx: RecorderContext): () => v
   };
 
   const send = function send(this: XMLHttpRequest, ...args: unknown[]) {
+    // A simulated request in flight (or its final state) is not OPENED: send() throws like a native one.
+    if (simulations.blocksSend(this)) throw invalidStateError('send');
     const m = meta.get(this);
     if (!m || !ctx.config().enabled) return Reflect.apply(originalSend, this, args) as void;
+    const plan = m.async ? planSimulation(m) : undefined;
     let ok = false;
     try {
       begin(this, m, args[0]);
       ok = true;
     } catch {
       /* capture failure must not affect the page */
+    }
+    if (plan) {
+      simulate(this, m, args, plan);
+      return undefined;
     }
     try {
       return Reflect.apply(originalSend, this, args) as void;
@@ -81,6 +135,61 @@ export function installXhrRecorder(host: XhrHost, ctx: RecorderContext): () => v
       throw err;
     }
   };
+
+  const abort = function abort(this: XMLHttpRequest, ...args: unknown[]) {
+    let handled: boolean;
+    try {
+      handled = simulations.abort(this);
+    } catch {
+      handled = false;
+    }
+    if (handled) return undefined;
+    return Reflect.apply(originalAbort, this, args) as void;
+  };
+
+  function planSimulation(m: XhrMeta): SimulationPlan | undefined {
+    try {
+      const gate = simulator.gate();
+      if (gate) return { gate };
+      if (!simulator.active()) return undefined;
+      const decision = simulator.decide(m.method, m.url);
+      return decision ? { decision } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The page gets a simulated outcome; capture records it through the usual listeners. */
+  function simulate(xhr: XMLHttpRequest, m: XhrMeta, args: unknown[], plan: SimulationPlan) {
+    const draft = m.draft;
+    const mark = (decision: SimulationDecision) => {
+      if (!draft) return;
+      draft.simulated = { ...decision.info };
+      draft.warnings.push(describeSimulation(decision));
+    };
+    if (plan.decision) mark(plan.decision);
+    simulations.start(xhr, {
+      sim: simulator,
+      url: m.url,
+      decision: plan.decision,
+      gate: plan.gate,
+      decideLater: () => {
+        try {
+          return simulator.decide(m.method, m.url);
+        } catch {
+          return undefined;
+        }
+      },
+      send: () => Reflect.apply(originalSend, xhr, args) as void,
+      onDecision: mark,
+      onReleased: (decision) => {
+        if (!draft) return;
+        draft.simulated = { ...decision.info, sent: true };
+        draft.warnings.push(RELEASED_NOTE);
+      },
+      onGateTimeout: () => draft?.warnings.push(GATE_TIMEOUT_NOTE),
+    });
+  }
 
   function begin(xhr: XMLHttpRequest, m: XhrMeta, body: unknown) {
     m.outcome = undefined;
@@ -114,17 +223,19 @@ export function installXhrRecorder(host: XhrHost, ctx: RecorderContext): () => v
       xhr.addEventListener('timeout', () => setOutcome(xhr, 'timeout'));
       xhr.addEventListener('error', () => setOutcome(xhr, 'error'));
     }
-    xhr.addEventListener(
-      'loadend',
-      () => {
-        try {
-          finish(xhr, m, draft);
-        } catch {
-          /* ignore */
-        }
-      },
-      { once: true },
-    );
+    // Every loadend of this request's own outcome fires at DONE. One at another state
+    // belongs to the previous request of a reused object (open() + send() from its
+    // load handler, after which the browser still dispatches that request's loadend).
+    const onLoadEnd = () => {
+      if (xhr.readyState !== DONE) return;
+      xhr.removeEventListener('loadend', onLoadEnd);
+      try {
+        finish(xhr, m, draft);
+      } catch {
+        /* ignore */
+      }
+    };
+    xhr.addEventListener('loadend', onLoadEnd);
   }
 
   function setOutcome(xhr: XMLHttpRequest, outcome: XhrMeta['outcome']) {
@@ -172,7 +283,9 @@ export function installXhrRecorder(host: XhrHost, ctx: RecorderContext): () => v
   proto.open = open as typeof proto.open;
   proto.setRequestHeader = setRequestHeader as typeof proto.setRequestHeader;
   proto.send = send as typeof proto.send;
+  proto.abort = abort as typeof proto.abort;
   return () => {
+    if (proto.abort === abort) proto.abort = originalAbort;
     if (proto.open === open) proto.open = originalOpen;
     if (proto.setRequestHeader === setRequestHeader) proto.setRequestHeader = originalSetRequestHeader;
     if (proto.send === send) proto.send = originalSend;

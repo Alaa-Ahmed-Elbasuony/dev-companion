@@ -1,4 +1,5 @@
 // Core data model shared by capture, storage, analysis and UI layers.
+import type { PageSimulationConfig, SimulatedInfo } from './simulation';
 
 export type CaptureSource = 'fetch' | 'xhr' | 'beacon' | 'replay' | 'import' | 'cdp';
 
@@ -64,6 +65,8 @@ export interface NetworkDraft {
   warnings: string[];
   requestBody?: CapturedBody;
   responseBody?: CapturedBody;
+  /** Set when a simulation rule produced or altered the outcome. */
+  simulated?: SimulatedInfo;
 }
 
 /** Persisted request summary. Bodies are stored separately (see EntryBodies). */
@@ -102,6 +105,8 @@ export interface NetworkEntry {
   /** Number of values removed by redaction before storage. */
   redactions: number;
   replayOf?: string;
+  /** Set when a simulation rule produced or altered the outcome. */
+  simulated?: SimulatedInfo;
   /** Approximate stored size in bytes (summary + bodies). */
   bytes: number;
 }
@@ -206,6 +211,8 @@ export interface Settings {
   notificationSelectors: string[];
   serverIntegrations: ServerIntegration[];
   realtimeExpectations: RealtimeExpectation[];
+  /** Development origins where mock / latency / failure rules may run. Empty by default. */
+  simulationOrigins: string[];
 }
 
 /** Configuration sent to the in-page recorder. */
@@ -223,6 +230,8 @@ export interface CaptureConfig {
   /** Opt-in page API and DOM notification observer enabled for this origin. */
   appAdapters: boolean;
   notificationSelectors: string[];
+  /** Rules to apply in this page. Absent whenever the page must not simulate. */
+  simulation?: PageSimulationConfig;
 }
 
 export interface RecordingState {

@@ -21,6 +21,8 @@ export interface RequestFilter {
   maxSizeBytes?: number;
   hasWarnings?: boolean;
   redirected?: boolean;
+  /** Only requests a simulation rule produced or altered. */
+  simulated?: boolean;
 }
 
 export const EMPTY_FILTER: RequestFilter = { text: '', methods: [], status: 'all', sources: [] };
@@ -159,6 +161,7 @@ export function matchesFilter(
     return false;
   if (filter.hasWarnings && !entry.warnings.length) return false;
   if (filter.redirected && !entry.redirected) return false;
+  if (filter.simulated && !entry.simulated) return false;
   const { include, exclude } = parseQuery(filter.text);
   if (!include.length && !exclude.length) return true;
   const haystack = searchableText(entry);

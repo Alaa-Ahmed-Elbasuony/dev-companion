@@ -7,6 +7,7 @@ import {
   redactFreeText,
   redactUrl,
 } from '../analysis/redaction';
+import { describeSimulated, reachedNetwork, serverResponded } from '../analysis/simulated-traffic';
 import { redactDecoded } from '../background/realtime-ingest';
 import { redactSpan } from '../background/server-traces';
 import { DEFAULT_SETTINGS } from '../shared/settings';
@@ -160,6 +161,16 @@ export function buildHar(
             redirectURL: e.redirected && e.finalUrl ? e.finalUrl : '',
             headersSize: -1,
             bodySize: e.responseBodySize ?? -1,
+            // HAR has no field for a response that no server sent; `comment` is standard.
+            ...(e.simulated
+              ? {
+                  comment: serverResponded(e)
+                    ? `${describeSimulated(e.simulated, e)}. Server response; timings include time added by the rule.`
+                    : reachedNetwork(e)
+                      ? `${describeSimulated(e.simulated, e)}. No server response was recorded; timings include time added by the rule.`
+                      : `${describeSimulated(e.simulated, e)}. Synthetic: produced by Dev Companion, not returned by a server.`,
+                }
+              : {}),
           },
           cache: {},
           timings: { send: 0, wait, receive },
@@ -171,6 +182,7 @@ export function buildHar(
             warnings: e.warnings,
             error: e.errorMessage ? `${e.errorName ?? 'Error'}: ${e.errorMessage}` : undefined,
             initiator: e.initiatorStack,
+            simulated: e.simulated,
           },
         };
       }),
